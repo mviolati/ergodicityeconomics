@@ -2,7 +2,7 @@
 % Please edit documentation in R/model.R
 \name{coin_toss}
 \alias{coin_toss}
-\title{Description pending}
+\title{Creating random sample}
 \usage{
 coin_toss(lose, win, players, rounds)
 }
@@ -18,5 +18,8 @@ you win 1.5 of your current wealth}
 \item{rounds}{gamble rounds or repetitions}
 }
 \description{
-Description pending
+!!!! Players and round both greater than 10^5 gives error
+!!!! Error: cannot allocate vector of size 74.5 Gb
+!!!! Limit players to <= 10^4 and rounds <= 10^4
+!!!! Replicate Time spent on sapply -> lapply
 }

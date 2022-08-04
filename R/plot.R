@@ -18,8 +18,7 @@ coin_plot <- function(x) {
       color = "grey"
     ) +
     geom_line(
-      subset(x, in
-             dividual %in% focus),
+      subset(x, individual %in% focus),
       mapping = aes(x = rounds, y = value, color = individual),
       size = 1
     ) +

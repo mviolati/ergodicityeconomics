@@ -6,10 +6,11 @@ Author: Matteo VIolati
 Maintainer: The package maintainer <mviolati@outlook.com>
 Description: More about what it does (maybe more than one line)
     Use four spaces when indenting paragraphs within the Description.
-License: Apache License (= 2.0)
+License: Apache License (>= 2)
 Encoding: UTF-8
 LazyData: true
 Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 RoxygenNote: 7.2.1
+Imports: dplyr, ggplot2, scales, tibble, tidyr, tidyselect

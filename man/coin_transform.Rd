@@ -2,7 +2,7 @@
 % Please edit documentation in R/transform.R
 \name{coin_transform}
 \alias{coin_transform}
-\title{Description pending}
+\title{Adding Median, Mean and EV -> Transforming to long}
 \usage{
 coin_transform(x)
 }
@@ -10,5 +10,6 @@ coin_transform(x)
 \item{x}{}
 }
 \description{
-Description pending
+!!!! Biggest bottleneck is pivot longer !!!!
+!!!! Consider keeping wide !!!!
 }

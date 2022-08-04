@@ -1,4 +1,11 @@
-#' Description pending
+#'
+#' Creating random sample
+#'
+#'
+#' !!!! Players and round both greater than 10^5 gives error
+#' !!!! Error: cannot allocate vector of size 74.5 Gb
+#' !!!! Limit players to <= 10^4 and rounds <= 10^4
+#' !!!! Replicate Time spent on sapply -> lapply
 #'
 #' @param win
 #' percentage of wealth increase if you win
@@ -25,9 +32,5 @@ coin_toss <- function(lose, win, players, rounds) {
                         c(lose, win),
                         size = rounds,
                         replace = TRUE
-                      ))), .name_repair = "unique")
+                      ))))
 }
-# Players and round both greater than 10^5 gives error
-# Error: cannot allocate vector of size 74.5 Gb
-# Limit players to <= 10^4 and rounds <= 10^4
-# Replicate Time spent on sapply -> lapply
