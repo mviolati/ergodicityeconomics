@@ -6,7 +6,15 @@
 ## Replicating Example Gamble
 
 First objective was to replicate Fig. 2 of this
-[paper](https://rdcu.be/cS2t3).
+[paper](https://rdcu.be/cS2t3). For non-technicals may be hard to
+understand what is happenining.
+
+Next step is to implement a Shiny application in order let the user play
+with inputs, and show that increasing the number of players increases
+the probability that the ensemble averages would match the expected
+value.
+
+First though I’ll focus on code optimization.
 
 ## Code Optimization
 
@@ -14,8 +22,7 @@ In order to try to optimise code for a larger tibble, I have momentarily
 divided the code in 3 different phases: - Tibble Generation -
 Transformation - Plotting
 
-The code below is taking the same input given to the paper but instead
-of 150 players with 1k.
+The code below is taking the same input given in the paper.
 
 ### Tibble Generation
 
