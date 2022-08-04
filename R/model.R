@@ -1,7 +1,6 @@
 #'
 #' Creating random sample
 #'
-#'
 #' !!!! Players and round both greater than 10^5 gives error
 #' !!!! Error: cannot allocate vector of size 74.5 Gb
 #' !!!! Limit players to <= 10^4 and rounds <= 10^4
