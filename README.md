@@ -11,16 +11,17 @@ First objective was to replicate Fig. 2 of this
 ## Code Optimization
 
 In order to try to optimise code for a larger tibble, I have momentarily
-divided the code in 3 different phases: \* Tibble Generation \*
-Transformation \* Plotting
+divided the code in 3 different phases: - Tibble Generation -
+Transformation - Plotting
 
-The code below is taking the same input given to the paper.
+The code below is taking the same input given to the paper but instead
+of 150 players with 1k.
 
 ### Tibble Generation
 
-The bottleneck here is replicate which is nesting sapply that is nesting
-lapply. So with a large number of players a lot of vectors are created
-through lapply.
+The bottleneck here is replicate, which is nesting sapply, that is
+nesting lapply. So with a large number of players a lot of vectors are
+created through lapply.
 
 ``` r
 assign("EV", ((0.6 * 0.5) + (1.5 * 0.5)), envir = .GlobalEnv)
@@ -55,10 +56,11 @@ focus <- c("ensemble_avg", "expected_value", "ensemble_median")
 
 ggplot() +
   geom_line(
-    subset(df,!individual %in% focus),
+    subset(df, !individual %in% focus),
     mapping = aes(x = rounds, y = value, group = individual),
+    color = "grey",
     size = 0.5,
-    color = "grey"
+    alpha = 0.2
   ) +
   geom_line(
     subset(df, individual %in% focus),
@@ -70,7 +72,9 @@ ggplot() +
       10 ^ x),
     labels = trans_format("log10", math_format(10 ^ .x))
   ) +
-  theme_bw()
+  labs(color = "") +
+  theme_bw() +
+  theme(legend.position = "bottom")
 ```
 
 ![](README-unnamed-chunk-4-1.png)<!-- -->

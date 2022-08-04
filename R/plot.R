@@ -15,7 +15,8 @@ coin_plot <- function(x) {
       subset(x, !individual %in% focus),
       mapping = aes(x = rounds, y = value, group = individual),
       size = 0.5,
-      color = "grey"
+      color = "grey",
+      alpha = 0.2
     ) +
     geom_line(
       subset(x, individual %in% focus),
@@ -27,5 +28,6 @@ coin_plot <- function(x) {
         10 ^ x),
       labels = trans_format("log10", math_format(10 ^ .x))
     ) +
-    theme_bw()
+    theme_bw() +
+    theme(legend.position = "bottom")
 }
