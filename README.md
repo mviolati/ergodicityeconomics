@@ -6,21 +6,30 @@
 ## Replicating Example Gamble
 
 First objective was to replicate Fig. 2 of this
-[paper](https://rdcu.be/cS2t3). For non-technicals may be hard to
-understand what is happenining.
+[paper](https://rdcu.be/cS2t3). For non-technical may be hard to
+understand what is happening without modeling.
+
+Emanuel Derman’s
+[tweet](https://twitter.com/EmanuelDerman/status/1532473709239455745)
+stresses out that *“a 200% - 50% equal-probability gamble has an
+expected payoff of 125% if played once, but if you keep playing the
+eventual return is 50% x 200% = 100% in long run, no gain.”*
 
 Next step is to implement a Shiny application in order let the user play
 with inputs, and show that increasing the number of players increases
 the probability that the ensemble averages would match the expected
 value.
 
-First though I’ll focus on code optimization.
-
 ## Code Optimization
 
-In order to try to optimise code for a larger tibble, I have momentarily
-divided the code in 3 different phases: - Tibble Generation -
-Transformation - Plotting
+In order to try to optimise the code for a larger tibble, I have
+momentarily divided the code in 3 different phases:
+
+1.  Tibble Generation
+
+2.  Transformation
+
+3.  Plotting
 
 The code below is taking the same input given in the paper.
 
@@ -42,21 +51,26 @@ df <- as_tibble(replicate(150,
 
 ### Transformation
 
-The bottleneck is on making the tibble longer in order to lett ggplot
+The bottleneck is on making the tibble longer in order to let ggplot
 properly work.
 
 ``` r
-df <- df |>
-  mutate(ensemble_avg = rowMeans(df),
-         ensemble_median = apply(df, 1, median)) |>
-  rowid_to_column("rounds") |>
-  mutate(expected_value = EV ^ rounds) |>
-  pivot_longer(cols = !1, names_to = "individual")
+df <-   pivot_longer(
+    mutate(
+      rowid_to_column(df, "rounds"),
+      ensemble_avg = rowMeans(df),
+      ensemble_median = apply(df, 1, median),
+      expected_value = EV ^ rounds
+    ),
+    cols = !1,
+    names_to = "individual"
+  )
 ```
 
 ### Plotting
 
-Plotting is the biggest bottleneck.
+Plotting is the biggest bottleneck, but should be addressed directly
+while developing the shiny app.
 
 ``` r
 focus <- c("ensemble_avg", "expected_value", "ensemble_median")
