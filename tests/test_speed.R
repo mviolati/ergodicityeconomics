@@ -1,55 +1,26 @@
-library(ergodicityeconomics)
-library(microbenchmark)
-library(profvis)
-library(tidyverse)
-library(scales)
-library(microbenchmark)
+coin_toss()
 
+players <- 10^3
+rounds <- 10
 
-# Microbench Package ----
+df <- coin_toss(0.6, 1.5, players, rounds)
 
-df  <- coin_toss(0.6, 1.5, 10 ^ 3, 10 ^ 3)
-df1 <- coin_transform(df)
-
-microbenchmark(
-coin_toss(0.6, 1.5, 10 ^ 3, 10 ^ 3),
-coin_transform(df),
-coin_plot(df1)
+df <-  pivot_longer(
+  mutate(
+    rowid_to_column(df, "players"),
+    ensemble_avg = rowMeans(df),
+    ensemble_median = apply(df, 1, median),
+    expected_value = EV ^ rounds
+  ),
+  cols = !1,
+  names_to = "rounds"
 )
 
-# Profiling Package's Functions ----
+df <- coin_transform(df)
 
-profvis({
-  coin_toss(0.6, 1.5, 10 ^ 3, 10 ^ 3) |>
-    coin_transform() |>
-    coin_plot()
+coin_plot(df)
 
-})
-
-# Check ggplot bottlenecks ----
-
-df  <- coint_transform(coin_toss(0.6, 1.5, 10 ^ 3, 10 ^ 3))
-
-profvis({
-  focus <- c("ensemble_avg", "expected_value", "ensemble_median")
-
-  g <- ggplot() +
-    geom_line(
-      subset(df,!individual %in% focus),
-      mapping = aes(x = rounds, y = value, group = individual),
-      size = 0.5,
-      color = "grey"
-    ) +
-    geom_line(
-      subset(df, individual %in% focus),
-      mapping = aes(x = rounds, y = value, color = individual),
-      size = 1
-    ) +
-    scale_y_log10(
-      breaks = trans_breaks("log10", function(x)
-        10 ^ x),
-      labels = trans_format("log10", math_format(10 ^ .x))
-    ) +
-    theme_bw()
-  print(g)
-})
+matplot(df,
+        type = "l", lwd = 0.5, lty = 1, log = "y",
+        xlab = 'Months', ylab = 'Millions',
+        main = 'Projected Value of Initial Capital')

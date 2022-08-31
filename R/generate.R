@@ -1,10 +1,9 @@
 #'
 #' Creating random sample
 #'
-#' !!!! Players and round both greater than 10^5 gives error
-#' !!!! Error: cannot allocate vector of size 74.5 Gb
-#' !!!! Limit players to <= 10^4 and rounds <= 10^4
-#' !!!! Replicate Time spent on sapply -> lapply
+#' Limit players to <= 10^4
+#' Replicate Time spent on sapply -> lapply
+#' Long df is faster than wider
 #'
 #' @param win
 #' percentage of wealth increase if you win
@@ -15,10 +14,10 @@
 #' you lose to 0.6 of your current wealth
 #'
 #' @param rounds
-#' gamble rounds or repetitions
+#' gamble rounds or repetitions - max 10^3
 #'
 #' @param players
-#' number of players
+#' number of players - max 10^5
 #'
 #' @importFrom tibble as_tibble
 #'
