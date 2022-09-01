@@ -24,7 +24,7 @@
 #' @export
 
 coin_toss <- function(lose, win, players, rounds) {
-  assign("EV", ((lose * 0.5) + (win * 0.5)), envir = .GlobalEnv)
+  assign("EV", 0.5 * (lose + win), envir = .GlobalEnv)
   as_tibble(replicate(players,
                       cumprod(sample(
                         c(lose, win),
