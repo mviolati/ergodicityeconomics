@@ -7,9 +7,8 @@
 coin_transform(x)
 }
 \arguments{
-\item{x}{}
+\item{x}{the tibble of random numbers}
 }
 \description{
-!!!! Biggest bottleneck is pivot longer !!!!
-!!!! Consider keeping wide !!!!
+Adding Median, Mean and EV -> Transforming to long
 }

@@ -1,11 +1,12 @@
 #'
 #' Adding Median, Mean and EV -> Transforming to long
 #'
-#' @param x
+#' @param x the tibble of random numbers
 #'
 #' @importFrom dplyr mutate
 #' @importFrom tidyr pivot_longer
 #' @importFrom tibble rowid_to_column
+#' @importFrom stats median
 #'
 #' @export
 

@@ -18,10 +18,7 @@ you win 1.5 of your current wealth}
 \item{rounds}{gamble rounds or repetitions - max 10^3}
 }
 \description{
-!!!! Players and round both greater than 10^5 gives error
-!!!! Error: cannot allocate vector of size 74.5 Gb
-!!!! Limit players to <= 10^4 or try max 10^5
-!!!! Replicate Time spent on sapply -> lapply
-!!!! Decided to fix round
-!!!! Long df is faster than wider
+Limit players to <= 10^4
+Replicate Time spent on sapply -> lapply
+Long df is faster than wider
 }

@@ -2,13 +2,13 @@
 % Please edit documentation in R/plot.R
 \name{coin_plot}
 \alias{coin_plot}
-\title{Description pending}
+\title{Plotting with ggplot}
 \usage{
 coin_plot(x)
 }
 \arguments{
-\item{x}{}
+\item{x}{the previous long tibble}
 }
 \description{
-Description pending
+Plotting with ggplot
 }

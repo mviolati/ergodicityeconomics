@@ -1,7 +1,7 @@
 #'
 #' Plotting with ggplot
 #'
-#' @param x
+#' @param x the previous long tibble
 #'
 #' @importFrom ggplot2 ggplot aes geom_line scale_y_log10 theme_bw theme
 #' @importFrom scales trans_breaks trans_format math_format
@@ -13,7 +13,7 @@ coin_plot <- function(x) {
 
   ggplot() +
     geom_line(
-      subset(x,!individual %in% focus),
+      subset(x, !individual %in% focus),
       mapping = aes(x = rounds, y = value, group = individual),
       size = 0.5,
       color = "grey",
