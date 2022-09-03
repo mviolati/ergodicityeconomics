@@ -1,6 +1,6 @@
 ^.*\.Rproj$
-^.*\.Rmd$
-^.*\.png$
 ^\.Rproj\.user$
-^LICENSE\.md$
-^tests$
+^data-raw$
+dev_history.R
+^dev$
+$run_dev.*

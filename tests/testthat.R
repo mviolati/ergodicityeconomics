@@ -7,6 +7,6 @@
 # * https://testthat.r-lib.org/reference/test_package.html#special-files
 
 library(testthat)
-library(ergodicityeconomics)
+library(eeconomics)
 
-test_check("ergodicityeconomics")
+test_check("eeconomics")
