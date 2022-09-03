@@ -9,6 +9,3 @@ app_server <- function(input, output, session) {
 }
 
 
-# !! check() package first
-# !! Create a new git branch for the App
-# !! make the App based on the package already done
