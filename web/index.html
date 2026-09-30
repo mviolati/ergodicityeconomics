@@ -236,11 +236,24 @@ function show(v) {
   scale.append(el("span", null, v.scale.title), el("div", "bar"), ticks);
   v.scale.ticks.forEach(t => { const s = el("span", null, t.label); s.style.left = `${(100 * t.pos).toFixed(2)}%`; ticks.append(s); });
   $("legend").replaceChildren(...items, lines, rich, scale);
+  thinTicks();
 
   const table = $("table"), head = el("tr");
   v.table.head.forEach(h => head.append(el("th", null, h)));
   table.replaceChildren(head, ...v.table.rows.map(r => { const tr = el("tr"); r.forEach(c => tr.append(el("td", null, c))); return tr; }));
   simText = v.timing;
+}
+
+// Hide scale labels that would overlap a neighbour (the first and the last always stay).
+function thinTicks() {
+  const spans = [...document.querySelectorAll(".scale .ticks span")];
+  spans.forEach(s => { s.style.visibility = "visible"; });
+  const last = spans[spans.length - 1];
+  let prev = spans[0];
+  for (const s of spans.slice(1, -1)) {
+    const a = prev.getBoundingClientRect(), b = s.getBoundingClientRect(), z = last.getBoundingClientRect();
+    if (b.left < a.right + 6 || b.right > z.left - 6) s.style.visibility = "hidden"; else prev = s;
+  }
 }
 
 const isDark = () => {
@@ -305,7 +318,7 @@ $("reseed").addEventListener("click", () => {
   play();
 });
 let resizeTimer;
-window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(draw, 120); });
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { draw(); thinTicks(); }, 120); });
 new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
 window.__coin = { play, draw, wasm: () => wasm };
