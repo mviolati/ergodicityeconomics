@@ -156,7 +156,8 @@ pub fn columns_of_round(lay: &Layout, dpr: f32, dev_w: usize, t: u32) -> std::op
 /// Device rows that show cell (t, k): the rows whose centre lies in the cell's band. The band is
 /// at(t, k) -+ gap / 2 (the bands of one round tile the axis), cut at the rich and broke
 /// thresholds so that a cell never paints on the other side of a threshold line. If no row
-/// centre falls in the band, the row that holds at(t, k).
+/// centre falls in the band, the row that holds at(t, k), moved by one row if its centre is on the
+/// other side of a threshold line.
 pub fn rows_of_cell(scene: &Scene<'_>, lay: &Layout, dpr: f32, dev_h: usize, t: u32, k: u32) -> std::ops::Range<usize> {
     let lat = scene.game.lattice();
     let l = lat.at(t, k);
@@ -175,7 +176,16 @@ pub fn rows_of_cell(scene: &Scene<'_>, lay: &Layout, dpr: f32, dev_h: usize, t: 
     if r0 < r1 {
         r0..r1
     } else {
-        let r = (y(l).floor().max(0.0) as usize).min(dev_h - 1);
+        let mut r = (y(l).floor().max(0.0) as usize).min(dev_h - 1);
+        for thr in [lat.rich, lat.broke] {
+            let line = y(thr);
+            let centre = r as f64 + 0.5;
+            if l >= thr && centre > line && r > 0 {
+                r -= 1;
+            } else if l < thr && centre < line && r + 1 < dev_h {
+                r += 1;
+            }
+        }
         r..r + 1
     }
 }
@@ -526,9 +536,6 @@ mod tests {
             for t in 1..=400u32 {
                 for (k, _) in cells(&sc, t) {
                     let rows = rows_of_cell(&sc, &lay, frame.dpr, h, t, k);
-                    if rows.len() == 1 && (rows.start as f64 + 0.5) > y(lat.at(t, k) - lat.gap / 2.0) {
-                        continue; // sub-pixel band placed at its own value: allowed
-                    }
                     for thr in [lat.rich, lat.broke] {
                         let line = y(thr);
                         for r in rows.clone() {
