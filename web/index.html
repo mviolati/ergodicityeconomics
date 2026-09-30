@@ -1,7 +1,7 @@
 <title>Il gioco della moneta</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
 <style>
 /* Layout: one column; controls, headline figures, chart, legend, table, method notes. */
 /* Colour tokens are generated from coin-chart's palette (crates/coin-chart/src/theme.rs). */
@@ -11,6 +11,8 @@
   --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
+[hidden] { display: none !important; }
+.stale { opacity: 0.45; }
 body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
 .page { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 48px; display: grid; gap: 22px; }
 .page > * { min-width: 0; }
@@ -36,7 +38,7 @@ button:disabled { opacity: 0.55; cursor: progress; }
 .tile .v { font: 500 21px var(--font-data); font-variant-numeric: tabular-nums; }
 .tile .k { font-size: 13px; color: var(--muted); }
 .chart { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; min-width: 0; }
-.chart canvas { display: block; max-width: 100%; }
+.chart canvas { display: block; max-width: 100%; touch-action: pan-y; }
 .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; padding: 16px; text-align: center; }
 .cross { position: absolute; width: 1px; background: var(--muted); pointer-events: none; }
 .dot { position: absolute; width: 8px; height: 8px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid var(--surface); pointer-events: none; box-sizing: content-box; }
@@ -122,8 +124,8 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
   </details>
 
   <section class="notes">
-    <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Le celle di un round coprono l'asse senza buchi e nessuna cella attraversa una linea di soglia.</p>
-    <p><b>Le linee.</b> Le linee colorate spesse (fino a tre) sono giocatori veri di questo run, con il colore del loro ruolo. Le linee arancioni sottili sono i giocatori che hanno toccato 1 miliardo €; giocatori allo stesso livello nello stesso round si sovrappongono, quindi il numero esatto per round è nella striscia sotto il grafico. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
+    <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Tra due livelli occupati vicini non resta spazio vuoto, e nessuna cella attraversa una linea di soglia.</p>
+    <p><b>Le linee.</b> Le linee colorate spesse (fino a tre) sono giocatori veri di questo run, con il colore del loro ruolo. Le linee arancioni sottili sono gli altri giocatori che hanno toccato 1 miliardo €; giocatori allo stesso livello nello stesso round si sovrappongono. Per contarli c'è la striscia sotto il grafico: per ogni round, quanti giocatori sono sopra 1 miliardo € (se più round cadono nello stesso pixel, il più alto; il tooltip dà il valore di ogni round). Il crollo più profondo è misurato in proporzione (quante volte la ricchezza si divide), non in euro. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
     <p><b>Riproducibile.</b> La moneta del giocatore <i>i</i> al round <i>t</i> è un bit di Philox4x32-10 con chiave il seed. Stesso seed, stessi giocatori, su ogni dispositivo e con qualsiasi numero di thread.</p>
     <p><b>Motore.</b> Simulazione, testi e pixel del grafico sono calcolati in Rust compilato in WebAssembly, divisi tra i core del dispositivo. Il JavaScript della pagina sposta solo i dati e li mette sullo schermo.</p>
   </section>
@@ -143,38 +145,45 @@ const $ = id => document.getElementById(id);
 const WORKER = `
 let inst;
 onmessage = async (e) => {
+  const d = e.data;
   try {
-    const d = e.data;
     if (!inst) inst = await WebAssembly.instantiate(d.mod);
     const x = inst.exports, cells = d.rounds * (d.rounds + 1), n = d.n;
     const pc = x.alloc(4 * cells), pf = x.alloc(4 * ${FIELDS} * n);
+    const t0 = performance.now();
     const rc = x.sim_chunk(d.rounds, d.seedLo, d.seedHi, d.firstBlock, n, pc, pf);
+    const ms = performance.now() - t0;
     const m = x.memory.buffer;
-    const out = { rc, counts: new Uint32Array(m, pc, cells).slice(), fields: new Uint32Array(m, pf, ${FIELDS} * n).slice() };
+    const out = { job: d.job, rc, ms, counts: new Uint32Array(m, pc, cells).slice(), fields: new Uint32Array(m, pf, ${FIELDS} * n).slice() };
     x.dealloc(pc, 4 * cells); x.dealloc(pf, 4 * ${FIELDS} * n);
     postMessage(out, [out.counts.buffer, out.fields.buffer]);
   } catch (err) {
-    postMessage({ error: String(err && err.message || err) });
+    postMessage({ job: d.job, error: String(err && err.message || err) });
   }
 };`;
 const workerURL = URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }));
-const pool = [];
+let pool = [], job = 0;
 const worker = i => { while (pool.length <= i) pool.push(new Worker(workerURL)); return pool[i]; };
+// A reply is used only by the job that asked for it; a failed run discards every worker.
 const ask = (w, msg) => new Promise((ok, fail) => {
-  w.onmessage = e => e.data.error ? fail(new Error(e.data.error)) : ok(e.data);
+  w.onmessage = e => { if (e.data.job !== msg.job) return; e.data.error ? fail(new Error(e.data.error)) : ok(e.data); };
   w.onerror = e => { e.preventDefault(); fail(new Error(e.message || "errore nel worker")); };
   w.onmessageerror = () => fail(new Error("messaggio del worker illeggibile"));
   w.postMessage(msg);
 });
+const resetPool = () => { pool.forEach(w => w.terminate()); pool = []; };
 const read = (x, len) => decoder.decode(new Uint8Array(x.memory.buffer, x.out_ptr(), len));
 
 let wasm = null, ready = false, busy = false, simText = "", richTexts = null;
 const controls = () => [$("play"), $("reseed"), $("players"), $("rounds"), $("seed")];
+const results = () => [$("tiles"), $("plot"), $("legend"), $("timing"), $("table")];
 
 async function play() {
   if (busy) return; // one run at a time: a second click never mixes two runs
   busy = true; ready = false; hide();
+  const focused = document.activeElement;
   controls().forEach(c => { c.disabled = true; });
+  results().forEach(e => e.classList.add("stale"));
   const P = +$("players").value, R = +$("rounds").value;
   let seed = Math.floor(Number($("seed").value));
   if (!Number.isSafeInteger(seed) || seed < 0) seed = 0;
@@ -182,18 +191,19 @@ async function play() {
   const seedLo = seed % 4294967296, seedHi = Math.floor(seed / 4294967296);
   $("status").hidden = false;
   $("status").textContent = "Simulazione in corso…";
+  let ok = false;
   try {
     const m = await mod;
     wasm = (await main).exports;
     if (wasm.run_begin(P, R, seedLo, seedHi) !== 0) throw new Error("parametri fuori intervallo");
     const threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
-    const blocks = Math.ceil(P / 64), per = Math.ceil(blocks / threads) * 64;
-    const t0 = performance.now(), jobs = [];
+    const blocks = Math.ceil(P / 64), per = Math.ceil(blocks / threads) * 64, jobs = [];
+    job += 1;
     for (let w = 0; w * per < P; w++) {
-      jobs.push(ask(worker(w), { mod: m, rounds: R, seedLo, seedHi, firstBlock: w * per / 64, n: Math.min(per, P - w * per) }));
+      jobs.push(ask(worker(w), { job, mod: m, rounds: R, seedLo, seedHi, firstBlock: w * per / 64, n: Math.min(per, P - w * per) }));
     }
     const parts = await Promise.all(jobs);
-    const simMs = performance.now() - t0;
+    const simMs = Math.max(...parts.map(p => p.ms));
     parts.forEach((part, w) => {
       if (part.rc !== 0) throw new Error("simulazione rifiutata");
       const first = w * per, n = part.fields.length / FIELDS;
@@ -205,16 +215,21 @@ async function play() {
     });
     if (wasm.run_finish(simMs, parts.length) !== 0) throw new Error("risultati incompleti");
     show(JSON.parse(read(wasm, wasm.view())));
-    busy = false; ready = true;
-    draw();
-    $("status").hidden = true;
+    ok = true;
   } catch (err) {
-    ready = false;
+    resetPool();
     $("status").hidden = false;
-    $("status").textContent = `Non è stato possibile simulare: ${err.message}. Ricarica la pagina e riprova.`;
+    $("status").textContent = `Non è stato possibile simulare: ${err.message}. I dati attenuati sono del run precedente. Riprova.`;
   } finally {
     busy = false;
     controls().forEach(c => { c.disabled = false; });
+    if (focused && controls().includes(focused)) focused.focus();
+  }
+  if (ok) {
+    ready = true;
+    results().forEach(e => e.classList.remove("stale"));
+    draw();
+    $("status").hidden = true;
   }
 }
 
@@ -312,7 +327,8 @@ function draw() {
   if (!ptr) return;
   const w = wasm.render_width(), h = wasm.render_height();
   canvas.width = w; canvas.height = h;
-  canvas.style.width = `${cssW}px`; canvas.style.height = `${cssH}px`;
+  // CSS size = bitmap / dpr exactly, so that a CSS pixel maps to the device pixels Rust drew.
+  canvas.style.width = `${w / dpr}px`; canvas.style.height = `${h / dpr}px`;
   const px = new Uint8ClampedArray(wasm.memory.buffer, ptr, w * h * 4).slice();
   canvas.getContext("2d").putImageData(new ImageData(px, w, h), 0, 0);
   $("timing").textContent = `${simText} · disegno ${Math.round(performance.now() - t0)} ms`;
@@ -356,7 +372,10 @@ function hover(ev) {
 
 $("plot").addEventListener("pointermove", hover);
 $("plot").addEventListener("pointerdown", hover);
-$("plot").addEventListener("pointerleave", hide);
+// Mouse: hide when the pointer leaves. Touch: the tooltip stays after the finger lifts, until the
+// next tap outside the chart.
+$("plot").addEventListener("pointerleave", e => { if (e.pointerType === "mouse") hide(); });
+document.addEventListener("pointerdown", e => { if (e.pointerType !== "mouse" && !$("chart").contains(e.target)) hide(); });
 $("controls").addEventListener("submit", e => { e.preventDefault(); play(); });
 $("reseed").addEventListener("click", () => {
   if (busy) return;
@@ -364,10 +383,23 @@ $("reseed").addEventListener("click", () => {
   $("seed").value = String((a[0] & 0x1fffff) * 4294967296 + a[1]);
   play();
 });
-let resizeTimer;
-window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { draw(); thinTicks(); }, 120); });
+// Redraw when the chart's width changes (window resize, a scrollbar appearing, a host layout).
+let lastWidth = 0, resizeTimer;
+new ResizeObserver(() => {
+  const w = $("chart").clientWidth;
+  if (w === lastWidth) return;
+  lastWidth = w;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { draw(); thinTicks(); }, 80);
+}).observe($("chart"));
 new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+// Text fonts load in the background; the chart does not need them (its font is in the module).
+const fonts = document.createElement("link");
+fonts.rel = "stylesheet";
+fonts.href = "https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap";
+fonts.addEventListener("load", () => setTimeout(thinTicks, 100));
+document.head.append(fonts);
 window.__coin = { play, draw, wasm: () => wasm, busy: () => busy, ready: () => ready };
-(document.fonts ? document.fonts.ready : Promise.resolve()).then(play);
+play();
 </script>

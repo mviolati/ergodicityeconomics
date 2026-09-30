@@ -3,7 +3,7 @@ name = "coin-chart"
 description = "Pure-Rust renderer of the coin-game chart: density of all players plus individual paths"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "Apache-2.0 AND OFL-1.1" # code: Apache-2.0; embedded IBM Plex Sans font: OFL-1.1
 rust-version.workspace = true
 
 [features]

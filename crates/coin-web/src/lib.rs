@@ -32,6 +32,8 @@ struct Finished {
     /// Highlighted players: id, palette slot, path (log10 EUR per round).
     highlighted: Vec<(u64, usize, Vec<f64>)>,
     rich_paths: Vec<Vec<f64>>,
+    /// Players who reached the rich threshold and are not highlighted (all of them, drawn or not).
+    rich_thin: u64,
     layout: Option<(Layout, Raster)>,
     pixels: Vec<u8>,
     size: (u32, u32),
@@ -175,8 +177,9 @@ pub extern "C" fn run_add_scratch() {
     })
 }
 
-/// Computes lines, figures and the players to show. Returns 0, or -1 if no run is open or the
-/// density does not hold every player in every round.
+/// Computes lines, figures and the players to show. `sim_ms` is the simulation time measured in
+/// the workers (the slowest one). Returns 0, or -1 if no run is open or the density does not hold
+/// every player in every round.
 #[no_mangle]
 pub extern "C" fn run_finish(sim_ms: f64, threads: u32) -> i32 {
     RUN.with(|r| {
@@ -198,7 +201,11 @@ pub extern "C" fn run_finish(sim_ms: f64, threads: u32) -> i32 {
         let st = stats(&game, &run.summary, &e);
         let pk = picks(&game, &run.summary);
         let highlighted = pk.iter().map(|p| (p.id, p.role.slot(), log_path(p.id))).collect();
-        let rich_paths = rich_ids(&game, &run.summary).into_iter().take(MAX_RICH_LINES).map(log_path).collect();
+        // Highlighted players already have their own thick line: do not draw them twice.
+        let thin: Vec<u64> =
+            rich_ids(&game, &run.summary).into_iter().filter(|id| pk.iter().all(|p| p.id != *id)).collect();
+        let rich_thin = thin.len() as u64;
+        let rich_paths = thin.into_iter().take(MAX_RICH_LINES).map(log_path).collect();
         run.sim_ms = sim_ms;
         run.threads = threads;
         run.done = Some(Finished {
@@ -207,6 +214,7 @@ pub extern "C" fn run_finish(sim_ms: f64, threads: u32) -> i32 {
             picks: pk,
             highlighted,
             rich_paths,
+            rich_thin,
             layout: None,
             pixels: Vec::new(),
             size: (0, 0),
@@ -222,8 +230,8 @@ pub extern "C" fn view() -> u32 {
         let r = r.borrow();
         let run = r.as_ref()?;
         let d = run.done.as_ref()?;
-        let shown = d.rich_paths.len();
-        Some(view::view_json(&run.game, &run.summary, &d.ensemble, &d.stats, &d.picks, shown, run.sim_ms, run.threads))
+        let thin = (d.rich_thin, d.rich_paths.len() as u64);
+        Some(view::view_json(&run.game, &run.summary, &d.ensemble, &d.stats, &d.picks, thin, run.sim_ms, run.threads))
     });
     s.map_or(0, put)
 }

@@ -5,7 +5,7 @@ use crate::Probe;
 use coin_chart::{legend_ticks, rich_label, Layout};
 use coin_core::{
     ensemble::Ensemble,
-    fmt::{eur, int, pct},
+    fmt::{eur, factor, int, pct},
     sim::{Summary, BROKE_T, FALL_FROM_K, FALL_FROM_T, FALL_TO_K, FALL_TO_T, FINAL_K, PEAK_K, PEAK_T},
     stats::{Pick, Role, Stats},
     Game,
@@ -109,7 +109,7 @@ pub fn player_text(game: &Game, s: &Summary, p: &Pick) -> (String, String) {
         Role::RichestAtEnd => format!("Il più ricco alla fine{tie}"),
         Role::RichThenBroke => format!("Da {rich} a sotto {broke}{tie}"),
         Role::RichThenLowest => format!("Tra chi ha toccato {rich}, il più in basso alla fine{tie}"),
-        Role::BiggestFall => format!("La caduta più grande{tie}"),
+        Role::BiggestFall => format!("Il crollo più profondo, in proporzione{tie}"),
         Role::FirstBroke if p.ties > 0 => format!(
             "Tra i primi a scendere sotto {broke}: al round {}, insieme ad {}",
             int(u64::from(broke_t)),
@@ -128,12 +128,13 @@ pub fn player_text(game: &Game, s: &Summary, p: &Pick) -> (String, String) {
             let (a, ak) = (s.get(FALL_FROM_T, i), s.get(FALL_FROM_K, i));
             let (b, bk) = (s.get(FALL_TO_T, i), s.get(FALL_TO_K, i));
             format!(
-                "#{} · da {} al round {} a {} al round {} · fine {} · {}",
+                "#{} · da {} al round {} a {} al round {}: ricchezza divisa per {} · fine {} · {}",
                 int(p.id),
                 eur(lat.at(a, ak)),
                 int(u64::from(a)),
                 eur(lat.at(b, bk)),
                 int(u64::from(b)),
+                factor(lat.at(a, ak) - lat.at(b, bk)),
                 fin,
                 broke_clause
             )
@@ -193,27 +194,50 @@ pub fn tiles(game: &Game, st: &Stats) -> Vec<(String, String)> {
     ]
 }
 
-/// Legend text for the thin orange lines: (clipped view, full paths view, checkbox label).
-pub fn rich_texts(game: &Game, st: &Stats, shown: usize) -> (String, String, String) {
+/// Legend text for the thin orange lines: (clipped view, full paths view, checkbox label; empty
+/// when there is no thin line). `thin` = players who reached the rich threshold and are not
+/// highlighted; `shown` = how many of them are drawn.
+pub fn rich_texts(game: &Game, rich_ever: u64, thin: u64, shown: u64) -> (String, String, String) {
     let rich = thr(game.rich);
-    if st.rich_ever == 0 {
+    if rich_ever == 0 {
         let none = format!("Nessun giocatore ha toccato {rich}.");
         return (none.clone(), none, String::new());
     }
-    let overlap = "Giocatori allo stesso livello nello stesso round hanno la stessa ricchezza e le loro linee si sovrappongono: il numero esatto per round è nella striscia sotto il grafico.";
-    let capped = if (shown as u64) < st.rich_ever {
-        format!(" Disegnati {} su {} (quelli con il numero più basso).", int(shown as u64), int(st.rich_ever))
+    if thin == 0 {
+        let all = if rich_ever == 1 {
+            format!("L'unico giocatore che ha toccato {rich} è una delle linee spesse.")
+        } else {
+            format!("I {} giocatori che hanno toccato {rich} sono tutti tra le linee spesse.", int(rich_ever))
+        };
+        return (all.clone(), all, String::new());
+    }
+    let (subject, verb, be) = if thin == 1 { ("1 giocatore", "ha", "è") } else { ("", "hanno", "sono") };
+    let subject = if thin == 1 { subject.to_string() } else { giocatori(thin) };
+    let besides = if thin < rich_ever { " (oltre alle linee spesse)" } else { "" };
+    let (path_clip, path_full) = if thin == 1 {
+        ("solo mentre è sopra la soglia", "percorso completo")
+    } else {
+        ("solo mentre sono sopra la soglia", "percorsi completi")
+    };
+    let _ = be;
+    let overlap = if thin >= 2 {
+        " Giocatori allo stesso livello nello stesso round hanno la stessa ricchezza e le loro linee si sovrappongono: per contarli usa la striscia sotto il grafico."
+    } else {
+        ""
+    };
+    let capped = if shown < thin {
+        format!(" Disegnati {} su {} (quelli con il numero più basso).", int(shown), int(thin))
     } else {
         String::new()
     };
-    let who = if st.rich_ever == 1 {
-        format!("l'unico giocatore che ha toccato {rich}")
+    let head = format!("Arancione sottile: {subject} che {verb} toccato {rich}{besides}");
+    let clipped = format!("{head}, {path_clip}.{overlap}{capped}");
+    let full = format!("{head}, {path_full}.{overlap}{capped}");
+    let toggle = if shown == 1 {
+        "Mostra il percorso completo (1 giocatore)".to_string()
     } else {
-        format!("i {} giocatori che hanno toccato {rich}", int(st.rich_ever))
+        format!("Mostra i percorsi completi ({})", giocatori(shown))
     };
-    let clipped = format!("Arancione sottile: {who}, solo mentre sono sopra la soglia. {overlap}{capped}");
-    let full = format!("Arancione sottile: {who}, percorso completo. {overlap}{capped}");
-    let toggle = format!("Mostra i percorsi completi ({})", giocatori(shown as u64));
     (clipped, full, toggle)
 }
 
@@ -225,7 +249,7 @@ pub fn view_json(
     e: &Ensemble,
     st: &Stats,
     picks: &[Pick],
-    rich_shown: usize,
+    rich_thin: (u64, u64),
     sim_ms: f64,
     threads: u32,
 ) -> String {
@@ -258,7 +282,7 @@ pub fn view_json(
     }
     j.raw("],");
 
-    let (clipped, full, toggle) = rich_texts(game, st, rich_shown);
+    let (clipped, full, toggle) = rich_texts(game, st.rich_ever, rich_thin.0, rich_thin.1);
     j.key("rich").raw("{").key("count").num(st.rich_ever as f64).raw(",");
     j.key("note").str(&clipped).raw(",").key("noteFull").str(&full).raw(",").key("toggle").str(&toggle).raw("},");
 
@@ -268,7 +292,11 @@ pub fn view_json(
     j.raw("{").key("style").str("dash").raw(",");
     j.key("label").str(&format!("Valore atteso (+{}% a round)", percent_step(game))).raw("},");
     j.raw("{").key("style").str("bar").raw(",");
-    j.key("label").str(&format!("Striscia: giocatori sopra {rich} in ogni round")).raw("}");
+    j.key("label")
+        .str(&format!(
+            "Striscia: giocatori sopra {rich} in ogni round (se più round cadono nello stesso pixel, il più alto)"
+        ))
+        .raw("}");
     j.raw("],");
 
     j.key("scale").raw("{");
@@ -324,7 +352,7 @@ pub fn view_json(
     ));
     j.raw(",");
     j.key("timing").str(&format!(
-        "{} lanci di moneta · simulazione {} ms su {} thread",
+        "{} lanci di moneta · simulazione {} ms (calcolo nei {} thread)",
         int(p * u64::from(game.rounds)),
         int(sim_ms.round().max(0.0) as u64),
         threads
@@ -425,25 +453,79 @@ mod tests {
     }
 
     #[test]
-    fn singular_and_plural_agree() {
+    fn headline_texts_are_exact() {
         let g = Game::peters(1000, 1);
         let one = tiles(&g, &st(1, 1, 1, 1, 1));
-        assert!(one[0].1.starts_with("ha toccato 1 miliardo €"), "{}", one[0].1);
-        assert!(one[4].1.ends_with("(1 giocatore)"), "{}", one[4].1);
+        let want_one = [
+            ("1", "ha toccato 1 miliardo € almeno una volta (0,01% dei giocatori)"),
+            ("1 di 1", "di chi ha toccato 1 miliardo €: sotto 1 € alla fine"),
+            ("1", "massimo di giocatori sopra 1 miliardo € nello stesso round (la prima volta al round 239)"),
+            ("1", "mai sotto 1 € (0,01% dei giocatori)"),
+            ("0,01%", "sopra i 100 € iniziali alla fine (1 giocatore)"),
+        ];
+        for (got, want) in one.iter().zip(want_one) {
+            assert_eq!((got.0.as_str(), got.1.as_str()), want);
+        }
         let many = tiles(&g, &st(277, 243, 43, 72, 154));
-        assert!(many[0].1.starts_with("hanno toccato 1 miliardo €"));
-        assert!(many[4].1.ends_with("(154 giocatori)"));
+        assert_eq!(many[0].1, "hanno toccato 1 miliardo € almeno una volta (2,77% dei giocatori)");
+        assert_eq!(many[4], ("1,54%".to_string(), "sopra i 100 € iniziali alla fine (154 giocatori)".to_string()));
+        let none = tiles(&g, &st(0, 0, 0, 5, 5));
+        assert_eq!(
+            none[1],
+            ("–".to_string(), "nessuno ha toccato 1 miliardo €, quindi nessuno da contare qui".to_string())
+        );
+        assert_eq!(none[2], ("0".to_string(), "in nessun round c'è un giocatore sopra 1 miliardo €".to_string()));
         assert_eq!(altri(1), "un altro giocatore");
         assert_eq!(altri(957), "altri 957 giocatori");
-        let (clip1, _, toggle1) = rich_texts(&g, &st(1, 1, 1, 1, 1), 1);
-        assert!(clip1.contains("l'unico giocatore") && toggle1.ends_with("(1 giocatore)"));
-        let (clip, full, toggle) = rich_texts(&g, &st(277, 243, 43, 72, 154), 277);
-        assert!(clip.contains("i 277 giocatori") && clip.contains("solo mentre") && full.contains("percorso completo"));
-        assert!(toggle.ends_with("(277 giocatori)"));
-        let (none, _, t0) = rich_texts(&g, &st(0, 0, 0, 5, 5), 0);
-        assert_eq!(none, "Nessun giocatore ha toccato 1 miliardo €.");
-        assert!(t0.is_empty());
-        assert_eq!(tiles(&g, &st(0, 0, 0, 5, 5))[1].0, "–");
+    }
+
+    #[test]
+    fn orange_line_texts_are_exact() {
+        let g = Game::peters(1000, 1);
+        assert_eq!(rich_texts(&g, 0, 0, 0).0, "Nessun giocatore ha toccato 1 miliardo €.");
+        assert_eq!(
+            rich_texts(&g, 1, 0, 0),
+            (
+                "L'unico giocatore che ha toccato 1 miliardo € è una delle linee spesse.".to_string(),
+                "L'unico giocatore che ha toccato 1 miliardo € è una delle linee spesse.".to_string(),
+                String::new(),
+            )
+        );
+        let (c, f, t) = rich_texts(&g, 2, 1, 1);
+        assert_eq!(c, "Arancione sottile: 1 giocatore che ha toccato 1 miliardo € (oltre alle linee spesse), solo mentre è sopra la soglia.");
+        assert_eq!(
+            f,
+            "Arancione sottile: 1 giocatore che ha toccato 1 miliardo € (oltre alle linee spesse), percorso completo."
+        );
+        assert_eq!(t, "Mostra il percorso completo (1 giocatore)");
+        let (c, _, t) = rich_texts(&g, 277, 276, 276);
+        assert_eq!(c, "Arancione sottile: 276 giocatori che hanno toccato 1 miliardo € (oltre alle linee spesse), solo mentre sono sopra la soglia. Giocatori allo stesso livello nello stesso round hanno la stessa ricchezza e le loro linee si sovrappongono: per contarli usa la striscia sotto il grafico.");
+        assert_eq!(t, "Mostra i percorsi completi (276 giocatori)");
+        let (c, _, _) = rich_texts(&g, 3000, 2999, 2000);
+        assert!(c.ends_with(" Disegnati 2.000 su 2.999 (quelli con il numero più basso)."), "{c}");
+    }
+
+    #[test]
+    fn player_texts_are_exact() {
+        let g = Game::peters(1000, 1);
+        let mut s = Summary::zeros(1);
+        // final 400 heads, peak at round 264 with 167 heads, first below 1 EUR at round 540,
+        // largest fall from (22, 13) to (1000, 400).
+        for (f, v) in [400u32, 264, 167, 540, 22, 13, 1000, 400].into_iter().enumerate() {
+            s.fields[f][0] = v;
+        }
+        let (n, d) = player_text(&g, &s, &Pick { id: 0, role: Role::RichThenBroke, ties: 0 });
+        assert_eq!(n, "Da 1 miliardo € a sotto 1 €");
+        assert_eq!(d, "#0 · picco 7,72 mld € al round 264 · fine 2,1 × 10⁻⁶¹ € · prima volta sotto 1 € al round 540 · tra chi ha toccato 1 miliardo €, il più in basso alla fine");
+        let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::RichestAtEnd, ties: 1 });
+        assert_eq!(n, "Il più ricco alla fine (a pari merito con un altro giocatore)");
+        let (n, d) = player_text(&g, &s, &Pick { id: 0, role: Role::BiggestFall, ties: 0 });
+        assert_eq!(n, "Il crollo più profondo, in proporzione");
+        assert_eq!(d, "#0 · da 196 € al round 22 a 2,1 × 10⁻⁶¹ € al round 1.000: ricchezza divisa per 9,2 × 10⁶² · fine 2,1 × 10⁻⁶¹ € · prima volta sotto 1 € al round 540");
+        let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::FirstBroke, ties: 957 });
+        assert_eq!(n, "Tra i primi a scendere sotto 1 €: al round 540, insieme ad altri 957 giocatori");
+        let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::FirstBroke, ties: 0 });
+        assert_eq!(n, "Il primo a scendere sotto 1 €: al round 540");
     }
 
     #[test]
@@ -468,12 +550,13 @@ mod tests {
                     if p.role == Role::BiggestFall {
                         let from = eur(lat.at(s.get(FALL_FROM_T, i), s.get(FALL_FROM_K, i)));
                         assert!(detail.contains(&format!("da {from}")), "{detail}");
+                        assert!(detail.contains("ricchezza divisa per"), "{detail}");
                     }
                     if s.get(BROKE_T, i) == 0 {
                         assert!(detail.contains("mai sotto 1 €"));
                     }
                 }
-                let v = view_json(&game, &s, &e, &stt, &ps, 0, 1.0, 1);
+                let v = view_json(&game, &s, &e, &stt, &ps, (0, 0), 1.0, 1);
                 assert!(v.starts_with('{') && v.ends_with('}'));
             }
         }

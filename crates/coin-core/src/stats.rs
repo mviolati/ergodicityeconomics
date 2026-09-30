@@ -222,6 +222,17 @@ mod tests {
         assert!(rich_ids(&low_rich(300, 4), &s).len() > 1000);
     }
 
+    #[test]
+    fn most_at_once_reports_the_first_round_of_the_maximum() {
+        let game = Game::peters(3, 0);
+        let players = 5;
+        let (counts, s) = simulate(&game, players);
+        let mut e = ensemble(&game, players as u64, &counts);
+        e.rich_now = vec![0, 5, 3, 5];
+        let st = stats(&game, &s, &e);
+        assert_eq!((st.rich_most_at_once, st.rich_most_at_once_round), (5, 1));
+    }
+
     /// Recomputes each role from its definition with a direct scan, ties included.
     #[test]
     fn picks_are_distinct_and_their_names_and_ties_are_true() {

@@ -98,7 +98,21 @@ mod tests {
     #[test]
     fn every_character_we_draw_exists_in_the_font() {
         let f = font();
-        for c in "0123456789.,−-€ roundmiliardo".chars() {
+        // Every text the chart draws (see render): digits, separators, units, titles.
+        let texts = [
+            "0123456789.,−",
+            "\u{2009}€",
+            "10",
+            "round",
+            "1 mld €",
+            "1 €",
+            "Giocatori sopra 1 mld €, round per round",
+            "Sopra 1 mld €, per round",
+            "Giocatori sopra 1 mld €: nessuno, in nessun round",
+            "Sopra 1 mld €: nessuno",
+            "1,00 € 999 mln € 8,4 × 10",
+        ];
+        for c in texts.iter().flat_map(|t| t.chars()) {
             assert_ne!(f.glyph_id(c).0, 0, "missing glyph for {c:?}");
         }
     }

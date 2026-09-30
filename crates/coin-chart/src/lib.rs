@@ -6,11 +6,11 @@
 //!   pixel, the pixel shows the fullest of them. Colour: log scale from 1 player to the fullest
 //!   cell; the page prints the scale in numbers ([`legend_ticks`]). Cells never paint across a
 //!   threshold line, and the cells of one round tile the axis without holes ([`band`]).
-//! - Strip under the plot: the exact number of players at or above the rich threshold in each
-//!   round (same columns as the density).
+//! - Strip under the plot: the number of players at or above the rich threshold in each round
+//!   (same columns as the density; where several rounds share a column, the largest of them).
 //! - Thin orange lines: the players who reached the rich threshold, by default only where they are
-//!   at or above it. Players on the same level in the same round have the same wealth, so their
-//!   lines coincide: the strip, not the lines, gives the count.
+//!   at or above it; highlighted players are not drawn twice. Players on the same level in the
+//!   same round have the same wealth, so their lines coincide: the strip gives the count.
 //! - Thick coloured lines: the players singled out by `coin_core::stats::picks`, coloured by role.
 //! - Ink lines: median player (solid), mean of all players (dotted), expected value (dashed).
 
@@ -302,7 +302,11 @@ pub fn strip_counts(scene: &Scene<'_>, lay: &Layout, ras: &Raster) -> Vec<u64> {
 
 /// Position in [0, 1] of `n` players on the log colour scale that ends at `max_cell`.
 pub fn scale_position(n: u32, max_cell: u32) -> f64 {
-    if max_cell <= 1 || n <= 1 {
+    if max_cell <= 1 {
+        // One player in all: every occupied cell is the fullest cell.
+        return 1.0;
+    }
+    if n <= 1 {
         return 0.0;
     }
     (f64::from(n).ln() / f64::from(max_cell).ln()).min(1.0)
@@ -321,6 +325,46 @@ pub fn legend_ticks(max_cell: u32) -> Vec<(u32, f64)> {
         };
     }
     out.push((max_cell.max(1), 1.0));
+    out
+}
+
+/// Round labels under the strip: 0, R/4, R/2, 3R/4, R without duplicates, and without the middle
+/// ones that would touch a neighbour. (text, x, alignment).
+fn round_ticks(lay: &Layout) -> Vec<(String, f32, Align)> {
+    let r = lay.rounds;
+    let mut ts: Vec<u32> = (0..=4u32).map(|i| (u64::from(r) * u64::from(i) / 4) as u32).collect();
+    ts.dedup();
+    let last = *ts.last().expect("at least round 0");
+    let span = |t: u32, label: &str| {
+        let (x, w) = (lay.x_of(f64::from(t)), text::width(label, 12.0));
+        if t == 0 {
+            (x, x + w)
+        } else if t == last {
+            (x - w, x)
+        } else {
+            (x - w / 2.0, x + w / 2.0)
+        }
+    };
+    let last_label = coin_core::fmt::int(u64::from(last));
+    let last_left = span(last, &last_label).0;
+    let mut out = Vec::new();
+    let mut right = f32::NEG_INFINITY;
+    for &t in &ts {
+        let label = coin_core::fmt::int(u64::from(t));
+        let (a, b) = span(t, &label);
+        let is_end = t == 0 || t == last;
+        if is_end || (a >= right + 6.0 && b <= last_left - 6.0) {
+            let align = if t == 0 {
+                Align::Left
+            } else if t == last {
+                Align::Right
+            } else {
+                Align::Center
+            };
+            right = b;
+            out.push((label, lay.x_of(f64::from(t)), align));
+        }
+    }
     out
 }
 
@@ -419,6 +463,18 @@ fn power_label(pm: &mut Pixmap, tf: Transform, e: i64, x: f32, y: f32, color: Rg
     text(pm, tf, "10", x - we - wx, y, label(12.0));
 }
 
+/// Device-pixel rectangles (x, y, w, h) of the frame around a raster: `th` pixels just outside it.
+pub fn frame_rects(ras: &Raster, th: usize) -> [(usize, usize, usize, usize); 4] {
+    let (x0, y0) = (ras.ox.saturating_sub(th), ras.oy.saturating_sub(th));
+    let full_w = ras.ox + ras.w + th - x0;
+    [
+        (x0, y0, full_w, ras.oy - y0),       // top
+        (x0, ras.oy + ras.h, full_w, th),    // bottom
+        (x0, ras.oy, ras.ox - x0, ras.h),    // left
+        (ras.ox + ras.w, ras.oy, th, ras.h), // right
+    ]
+}
+
 fn put(pixels: &mut [PremultipliedColorU8], dw: usize, x: usize, y: usize, c: Rgb) {
     if x < dw && y * dw + x < pixels.len() {
         pixels[y * dw + x] = PremultipliedColorU8::from_rgba(c.0, c.1, c.2, 255).expect("opaque colour");
@@ -482,10 +538,18 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
         }
     }
 
-    // Everything else in the plot is clipped to it.
-    let clip = rect_mask(dw, dh, tf, lay.x, lay.y, lay.w, lay.h);
-    let rich_bottom = if scene.rich_full { lay.y + lay.h } else { lay.y_of(lat.rich) };
-    let rich_clip = rect_mask(dw, dh, tf, lay.x, lay.y, lay.w, rich_bottom - lay.y);
+    // Everything else in the plot is clipped to its device pixels.
+    let clip = rect_mask(dw, dh, Transform::identity(), ras.ox as f32, ras.oy as f32, ras.w as f32, ras.h as f32);
+    let rich_bottom = if scene.rich_full { (ras.oy + ras.h) as f32 } else { lay.y_of(lat.rich) * frame.dpr };
+    let rich_clip = rect_mask(
+        dw,
+        dh,
+        Transform::identity(),
+        ras.ox as f32,
+        ras.oy as f32,
+        ras.w as f32,
+        rich_bottom - ras.oy as f32,
+    );
     let rich_paint = paint(theme.players[1], if theme.dark { 150 } else { 130 });
     for p in scene.rich_paths {
         if let Some(path) = polyline(&lay, p) {
@@ -519,10 +583,18 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
         }
     }
 
-    // Frames just outside the plot and the strip, so that no data pixel is covered.
-    for (y, h) in [(lay.y, lay.h), (lay.strip_y, lay.strip_h)] {
-        if let Some(r) = Rect::from_xywh(lay.x - 0.5, y - 0.5, lay.w + 1.0, h + 1.0) {
-            pm.stroke_path(&PathBuilder::from_rect(r), &rule, &stroke(1.0, None), tf, None);
+    // Frames in whole device pixels just outside the plot and the strip: no data pixel is covered.
+    let th = (frame.dpr.round() as usize).max(1);
+    {
+        let pixels = pm.pixels_mut();
+        for r in [&ras, &sras] {
+            for (x, y, w, h) in frame_rects(r, th) {
+                for yy in y..y + h {
+                    for xx in x..x + w {
+                        put(pixels, dw as usize, xx, yy, theme.rule);
+                    }
+                }
+            }
         }
     }
 
@@ -535,27 +607,22 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
         power_label(&mut pm, tf, d, lay.x - 8.0, lay.y_of(d as f64) + 4.0, theme.muted);
     }
     let rich = short_label(scene.game.rich);
-    let title = if strip_max > 0 {
-        format!("Giocatori sopra {rich}, round per round")
+    let titles = if strip_max > 0 {
+        [format!("Giocatori sopra {rich}, round per round"), format!("Sopra {rich}, per round")]
     } else {
-        format!("Giocatori sopra {rich}: nessuno, in nessun round")
+        [format!("Giocatori sopra {rich}: nessuno, in nessun round"), format!("Sopra {rich}: nessuno")]
     };
+    let title = titles.iter().find(|t| text::width(t, 12.0) <= lay.w).unwrap_or(&titles[1]);
     let title_style = Label { size: 12.0, align: Align::Left, color: theme.ink };
-    text(&mut pm, tf, &title, lay.x, lay.strip_y - 8.0, title_style);
+    text(&mut pm, tf, title, lay.x, lay.strip_y - 8.0, title_style);
     if strip_max > 0 {
         let max_txt = coin_core::fmt::int(strip_max);
         text(&mut pm, tf, &max_txt, lay.x - 8.0, lay.strip_y + 9.0, muted(11.0, Align::Right));
         text(&mut pm, tf, "0", lay.x - 8.0, lay.strip_y + lay.strip_h, muted(11.0, Align::Right));
     }
     let base = lay.strip_y + lay.strip_h + 18.0;
-    for i in 0..=4u32 {
-        let t = (u64::from(scene.game.rounds) * u64::from(i) / 4) as u32;
-        let align = match i {
-            0 => Align::Left,
-            4 => Align::Right,
-            _ => Align::Center,
-        };
-        text(&mut pm, tf, &coin_core::fmt::int(u64::from(t)), lay.x_of(f64::from(t)), base, muted(12.0, align));
+    for (label, x, align) in round_ticks(&lay) {
+        text(&mut pm, tf, &label, x, base, muted(12.0, align));
     }
     text(&mut pm, tf, "round", lay.x - 8.0, base, muted(12.0, Align::Right));
     (pm, lay)
@@ -755,6 +822,59 @@ mod tests {
         assert!(t.windows(2).all(|w| w[1].1 > w[0].1));
         assert_eq!(legend_ticks(1), vec![(1, 1.0)]);
         assert_eq!(scale_position(1, 500_733), 0.0);
+    }
+
+    #[test]
+    fn frames_lie_outside_the_rasters() {
+        let (game, counts, e) = parts(Game::peters(100, 11), 500);
+        let sc = scene(&game, &counts, &e);
+        for frame in FRAMES {
+            let lay = layout(&sc, frame);
+            for ras in [lay.raster(frame.dpr), lay.strip_raster(frame.dpr)] {
+                for (x, y, w, h) in frame_rects(&ras, (frame.dpr.round() as usize).max(1)) {
+                    let inside_x = x < ras.ox + ras.w && x + w > ras.ox;
+                    let inside_y = y < ras.oy + ras.h && y + h > ras.oy;
+                    assert!(!(inside_x && inside_y), "frame rect {:?} overlaps {ras:?}", (x, y, w, h));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn round_labels_are_distinct_and_do_not_touch() {
+        let (game, counts, e) = parts(Game::peters(1000, 11), 100);
+        let sc = scene(&game, &counts, &e);
+        for w in [200.0f32, 266.0, 320.0, 400.0, 1000.0] {
+            let lay = layout(&sc, Frame { css_w: w, css_h: 400.0, dpr: 1.0 });
+            let ticks = round_ticks(&lay);
+            let mut spans: Vec<(f32, f32)> = ticks
+                .iter()
+                .map(|(l, x, a)| {
+                    let tw = text::width(l, 12.0);
+                    match a {
+                        Align::Left => (*x, x + tw),
+                        Align::Right => (x - tw, *x),
+                        Align::Center => (x - tw / 2.0, x + tw / 2.0),
+                    }
+                })
+                .collect();
+            spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+            assert!(spans.windows(2).all(|p| p[1].0 >= p[0].1), "labels touch at width {w}: {ticks:?}");
+        }
+        for r in 1..4 {
+            let (game, counts, e) = parts(Game::peters(r, 1), 10);
+            let lay = layout(&scene(&game, &counts, &e), Frame { css_w: 600.0, css_h: 400.0, dpr: 1.0 });
+            let labels: Vec<String> = round_ticks(&lay).into_iter().map(|t| t.0).collect();
+            let mut unique = labels.clone();
+            unique.dedup();
+            assert_eq!(labels, unique, "duplicate round labels for {r} rounds");
+        }
+    }
+
+    #[test]
+    fn a_single_player_is_drawn_with_the_colour_its_legend_shows() {
+        assert_eq!(scale_position(1, 1), 1.0);
+        assert_eq!(legend_ticks(1), vec![(1, 1.0)]);
     }
 
     #[test]

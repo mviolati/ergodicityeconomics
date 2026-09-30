@@ -13,12 +13,36 @@ use std::{
     time::Instant,
 };
 
-fn arg<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> T {
-    args.iter()
-        .position(|a| a == name)
-        .and_then(|i| args.get(i + 1))
-        .map(|v| v.parse().unwrap_or_else(|_| panic!("bad value for {name}")))
-        .unwrap_or(default)
+/// `--name value` options. Unknown names, missing values and values that do not parse stop the
+/// program with a message (exit code 2).
+struct Opts(Vec<(String, String)>);
+
+fn fail(msg: &str) -> ! {
+    eprintln!("error: {msg}");
+    std::process::exit(2)
+}
+
+impl Opts {
+    fn parse(args: &[String], known: &[&str]) -> Opts {
+        let mut out = Vec::new();
+        let mut it = args.iter();
+        while let Some(name) = it.next() {
+            if !known.contains(&name.as_str()) {
+                fail(&format!("unknown option {name} (known: {})", known.join(" ")));
+            }
+            let value =
+                it.next().filter(|v| !v.starts_with("--")).unwrap_or_else(|| fail(&format!("{name} needs a value")));
+            out.push((name.clone(), value.clone()));
+        }
+        Opts(out)
+    }
+
+    fn get<T: std::str::FromStr>(&self, name: &str, default: T) -> T {
+        match self.0.iter().rev().find(|(n, _)| n == name) {
+            Some((_, v)) => v.parse().unwrap_or_else(|_| fail(&format!("bad value for {name}: {v}"))),
+            None => default,
+        }
+    }
 }
 
 fn threads() -> usize {
@@ -31,26 +55,46 @@ fn log_path(game: &Game, id: u64) -> Vec<f64> {
 }
 
 fn png(args: &[String]) {
-    let players: usize = arg(args, "--players", 10_000);
-    let game = Game::peters(arg(args, "--rounds", 1000), arg(args, "--seed", 2022));
-    game.validate().expect("valid game");
-    let dark = arg(args, "--theme", String::from("light")) == "dark";
-    let out: String = arg(args, "--out", String::from("chart.png"));
+    let known = ["--players", "--rounds", "--seed", "--theme", "--out", "--width", "--height", "--dpr"];
+    let o = Opts::parse(args, &known);
+    let players: usize = o.get("--players", 10_000);
+    if players == 0 || players > coin_web::MAX_PLAYERS as usize {
+        fail(&format!("--players must be in 1..={}", coin_web::MAX_PLAYERS));
+    }
+    let game = Game::peters(o.get("--rounds", 1000), o.get("--seed", 2022));
+    game.validate().unwrap_or_else(|e| fail(&e));
+    let theme_name: String = o.get("--theme", String::from("light"));
+    let dark = match theme_name.as_str() {
+        "light" => false,
+        "dark" => true,
+        other => fail(&format!("--theme must be light or dark, not {other}")),
+    };
+    let out: String = o.get("--out", String::from("chart.png"));
+    let frame = Frame { css_w: o.get("--width", 1000.0), css_h: o.get("--height", 560.0), dpr: o.get("--dpr", 2.0) };
+    if !(frame.css_w >= 200.0
+        && frame.css_h >= 260.0
+        && (1.0..=4.0).contains(&frame.dpr)
+        && frame.css_w * frame.dpr <= 8192.0)
+    {
+        fail("need --width >= 200, --height >= 260, 1 <= --dpr <= 4, width * dpr <= 8192");
+    }
     let t0 = Instant::now();
     let (counts, s) = simulate_parallel(&game, players, threads());
     let e = ensemble(&game, players as u64, &counts);
     let st = stats(&game, &s, &e);
     let hl: Vec<(Vec<f64>, usize)> = picks(&game, &s).iter().map(|p| (log_path(&game, p.id), p.role.slot())).collect();
-    let rich: Vec<Vec<f64>> = rich_ids(&game, &s).iter().map(|&id| log_path(&game, id)).collect();
+    // As on the page: highlighted players are not drawn twice.
+    let shown = picks(&game, &s);
+    let rich: Vec<Vec<f64>> = rich_ids(&game, &s)
+        .into_iter()
+        .filter(|id| shown.iter().all(|p| p.id != *id))
+        .take(coin_web::MAX_RICH_LINES)
+        .map(|id| log_path(&game, id))
+        .collect();
     let scene =
         Scene { game: &game, counts: &counts, ensemble: &e, highlighted: &hl, rich_paths: &rich, rich_full: false };
-    let frame = Frame {
-        css_w: arg(args, "--width", 1000.0),
-        css_h: arg(args, "--height", 560.0),
-        dpr: arg(args, "--dpr", 2.0),
-    };
     let (pm, _) = render(&scene, frame, if dark { &theme::DARK } else { &theme::LIGHT });
-    pm.save_png(&out).expect("write png");
+    pm.save_png(&out).unwrap_or_else(|e| fail(&format!("cannot write {out}: {e}")));
     eprintln!(
         "{out}: {} players, {} reached the rich threshold ({} at most at once), {:.2}s",
         players,
@@ -98,7 +142,7 @@ fn metadata(root: &Path) -> serde_json::Value {
 }
 
 /// License notices of every third-party crate compiled into the WebAssembly module, and of the
-/// embedded font, as an HTML <details> block.
+/// embedded font, as an HTML `<details>` block.
 fn notices(root: &Path, meta: &serde_json::Value) -> String {
     let packages = meta["packages"].as_array().expect("packages");
     // `cargo tree -p coin-web` resolves features for the WebAssembly build alone (the workspace
@@ -187,8 +231,15 @@ fn notices(root: &Path, meta: &serde_json::Value) -> String {
 fn web() {
     let root = root();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    // Panic messages carry source paths; map this machine's paths to neutral ones so that the
+    // page does not depend on (or reveal) where it was built.
+    let home = std::env::var("CARGO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cargo"));
+    let flags = format!("--remap-path-prefix={}=/src --remap-path-prefix={}=/cargo", root.display(), home.display());
     let status = Command::new(cargo)
         .current_dir(&root)
+        .env("RUSTFLAGS", flags)
         .args(["build", "--release", "-p", "coin-web", "--target", "wasm32-unknown-unknown"])
         .status()
         .expect("run cargo");

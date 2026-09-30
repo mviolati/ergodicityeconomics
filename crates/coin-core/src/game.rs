@@ -202,5 +202,9 @@ mod tests {
         assert!(Game { rich: 225.0, ..Game::peters(10, 1) }.validate().is_err());
         assert!(Game { rich: 225.0, ..Game::peters(1, 1) }.validate().is_ok(), "not reachable in 1 round");
         assert!(Game { rich: 1e4, ..Game::peters(500, 1) }.validate().is_ok());
+        // 100 * 0.6 = 60 EUR is reachable after 1 tails: a broke threshold there is ambiguous.
+        assert!(Game { broke: 60.0, ..Game::peters(10, 1) }.validate().is_err());
+        // With +100% / -50% the start is reached again after 1 heads and 1 tails.
+        assert!(Game { win: 2.0, lose: 0.5, ..Game::peters(10, 1) }.validate().is_err());
     }
 }

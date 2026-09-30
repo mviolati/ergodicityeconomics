@@ -295,7 +295,7 @@ mod tests {
     fn result_does_not_depend_on_threads() {
         let game = Game::peters(300, 7);
         let one = simulate(&game, 3001);
-        for threads in [2, 3, 4, 7] {
+        for threads in 2..=7 {
             assert_eq!(simulate_parallel(&game, 3001, threads), one, "threads {threads}");
         }
     }
@@ -314,7 +314,8 @@ mod tests {
     fn different_seeds_give_different_players() {
         let (_, a) = simulate(&Game::peters(100, 1), 256);
         let (_, b) = simulate(&Game::peters(100, 2), 256);
-        let (_, c) = simulate(&Game::peters(100, 1 << 40), 256);
+        // Same low 32 bits, different high bits: must differ if the high bits are used.
+        let (_, c) = simulate(&Game::peters(100, 1 + (1 << 40)), 256);
         assert_ne!(a.fields[FINAL_K], b.fields[FINAL_K]);
         assert_ne!(a.fields[FINAL_K], c.fields[FINAL_K], "the high 32 bits of the seed are used");
     }

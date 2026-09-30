@@ -1,7 +1,8 @@
 //! Italian number formatting (thousands ".", decimals ",").
 //!
-//! Values are TRUNCATED, never rounded up. A shown value is therefore never above the true
-//! value, and a player below 1 billion EUR is never shown as "1,00 mld €".
+//! Values are TRUNCATED, never rounded up. A shown value is never above the true value by more
+//! than 1e-12 (relative; slack for log/pow round-trip error), and a player below 1 billion EUR is
+//! never shown as "1,00 mld €": no reachable wealth is that close to a threshold.
 
 const SUP: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
 
@@ -84,6 +85,16 @@ fn three(l: f64) -> String {
     }
 }
 
+/// A factor from its log10, truncated: "3,5", "240", "2,9 × 10⁴³".
+pub fn factor(l: f64) -> String {
+    assert!(l.is_finite() && l >= 0.0, "a factor of at least 1");
+    if l >= 3.0 {
+        let (digits, e) = sig(l, 2);
+        return format!("{},{} × 10{}", digits / 10, digits % 10, superscript(e));
+    }
+    three(l)
+}
+
 /// Wealth in EUR from its log10, truncated:
 /// "3,1 × 10⁻¹³ €", "0,0123 €", "12,3 €", "6.216 €", "134 mln €", "7,72 mld €", "8,4 × 10¹⁶ €".
 pub fn eur(l: f64) -> String {
@@ -140,6 +151,13 @@ mod tests {
         assert_eq!(eur(16.9255), "8,4 × 10¹⁶ €");
         assert_eq!(eur(-12.52), "3,0 × 10⁻¹³ €");
         assert_eq!(eur(12.0), "1,0 × 10¹² €");
+    }
+
+    #[test]
+    fn factors() {
+        assert_eq!(factor(0.0), "1,00");
+        assert_eq!(factor(240f64.log10()), "240");
+        assert_eq!(factor(43.46), "2,8 × 10⁴³");
     }
 
     #[test]

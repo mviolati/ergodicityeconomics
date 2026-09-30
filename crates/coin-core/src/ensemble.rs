@@ -73,6 +73,19 @@ mod tests {
     use super::*;
     use crate::sim::{path, simulate};
 
+    /// The median player is rank ceil(P / 2) from the poorest: the lower middle for even P.
+    #[test]
+    fn median_is_rank_ceil_half() {
+        let game = Game::peters(1, 0);
+        let lat = game.lattice();
+        // 4 players: 2 tails, 2 heads -> rank 2 is a tails player (upper median would be heads).
+        assert_eq!(ensemble(&game, 4, &[2, 2]).median[1], lat.at(1, 0));
+        // 3 players: 1 tails, 2 heads -> rank 2 is a heads player.
+        assert_eq!(ensemble(&game, 3, &[1, 2]).median[1], lat.at(1, 1));
+        // 5 players: 3 tails, 2 heads -> rank 3 is a tails player.
+        assert_eq!(ensemble(&game, 5, &[3, 2]).median[1], lat.at(1, 0));
+    }
+
     #[test]
     fn lines_equal_a_direct_computation_over_players() {
         // The second game lowers the rich threshold so that rich_now is not trivially zero.
