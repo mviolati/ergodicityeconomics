@@ -135,6 +135,19 @@ mod tests {
         assert!(closest > 1e-9, "a lattice point is {closest:e} from a threshold");
     }
 
+    /// Comparisons between lattice points (the peak, the ranking of players) are exact on every
+    /// platform only if two different points are never within rounding error of each other.
+    /// Two points of different rounds or heads always differ; check by how much.
+    #[test]
+    fn distinct_lattice_points_are_far_apart() {
+        let lat = Game::peters(Game::MAX_ROUNDS, 0).lattice();
+        let mut all: Vec<f64> =
+            (0..=Game::MAX_ROUNDS).flat_map(|t| (0..=t).map(move |k| lat.at(t, k))).collect();
+        all.sort_by(f64::total_cmp);
+        let closest = all.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min);
+        assert!(closest > 1e-9, "two lattice points are only {closest:e} apart");
+    }
+
     #[test]
     fn base_plus_gap_is_the_same_number_as_at() {
         let lat = Game::peters(1000, 0).lattice();

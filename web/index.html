@@ -118,7 +118,7 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
 
   <section class="notes">
     <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Nessuna cella sotto una soglia viene disegnata sopra la sua linea.</p>
-    <p><b>Le linee.</b> Le tre linee colorate spesse sono giocatori veri di questo run. Le linee arancioni sottili sono i giocatori che in quel round hanno almeno 1 miliardo €: si possono contare, round per round.</p>
+    <p><b>Le linee.</b> Le tre linee colorate spesse sono giocatori veri di questo run. Le linee arancioni sottili sono i giocatori che in quel round hanno almeno 1 miliardo €: si possono contare, round per round. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
     <p><b>Riproducibile.</b> La moneta del giocatore <i>i</i> al round <i>t</i> è un bit di Philox4x32-10 con chiave il seed. Stesso seed, stessi giocatori, su ogni dispositivo e con qualsiasi numero di thread.</p>
     <p><b>Motore.</b> Simulazione, testi e pixel del grafico sono calcolati in Rust compilato in WebAssembly, divisi tra i core del dispositivo. Il JavaScript della pagina sposta solo i dati e li mette sullo schermo.</p>
   </section>

@@ -88,6 +88,7 @@ pub fn player_text(game: &Game, s: &Summary, p: &Pick) -> (String, String) {
         Role::RichThenBroke => format!("Da {rich} a sotto {broke}"),
         Role::RichThenLowest => format!("Tra chi ha toccato {rich}, il più in basso alla fine"),
         Role::BiggestFall => "La caduta più grande dal proprio picco".to_string(),
+        Role::FirstBroke if p.ties > 0 => format!("Tra i primi a scendere sotto {broke}"),
         Role::FirstBroke => format!("Il primo a scendere sotto {broke}"),
     };
     let tie = match (p.role, p.ties) {
