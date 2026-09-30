@@ -48,6 +48,17 @@ impl Game {
         if !(self.broke <= self.start && self.start < self.rich) {
             return Err("thresholds must satisfy broke <= start < rich".into());
         }
+        // Threshold tests are done in f64. They are exact only if no reachable wealth is within
+        // rounding error of a threshold, so reject games where one is.
+        let lat = self.lattice();
+        for t in 1..=self.rounds {
+            for k in 0..=t {
+                let l = lat.at(t, k);
+                if [lat.rich, lat.broke, lat.l0].iter().any(|thr| (l - thr).abs() <= 1e-9) {
+                    return Err(format!("a reachable wealth (round {t}, {k} heads) is on a threshold"));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -187,5 +198,9 @@ mod tests {
         assert!(Game::peters(Game::MAX_ROUNDS + 1, 1).validate().is_err());
         assert!(Game { win: 0.5, ..Game::peters(10, 1) }.validate().is_err());
         assert!(Game { broke: 200.0, ..Game::peters(10, 1) }.validate().is_err());
+        // 100 * 1.5^2 = 225 EUR is reachable after 2 heads: a threshold there is ambiguous.
+        assert!(Game { rich: 225.0, ..Game::peters(10, 1) }.validate().is_err());
+        assert!(Game { rich: 225.0, ..Game::peters(1, 1) }.validate().is_ok(), "not reachable in 1 round");
+        assert!(Game { rich: 1e4, ..Game::peters(500, 1) }.validate().is_ok());
     }
 }
