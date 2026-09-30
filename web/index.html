@@ -1,0 +1,313 @@
+<title>Il gioco della moneta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column; controls, headline figures, chart, legend, table, method notes. */
+/* Colour tokens are generated from coin-chart's palette (crates/coin-chart/src/theme.rs). */
+/*@TOKENS@*/
+:root {
+  --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.page { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 48px; display: grid; gap: 22px; }
+.page > * { min-width: 0; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(28px, 4.4vw, 40px); line-height: 1.1; margin: 0; text-wrap: balance; }
+.lede { margin: 6px 0 0; color: var(--muted); max-width: 68ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; }
+.field { display: grid; gap: 4px; }
+.field label { font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+select, input[type="number"] {
+  font: 500 15px var(--font-data); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 7px 10px; min-width: 0;
+}
+input[type="number"] { width: 11em; }
+button {
+  font: 600 14px var(--font-body); border-radius: 6px; padding: 8px 14px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent); color: #ffffff;
+}
+button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.55; cursor: progress; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; display: grid; gap: 2px; align-content: start; }
+.tile .v { font: 500 21px var(--font-data); font-variant-numeric: tabular-nums; }
+.tile .k { font-size: 13px; color: var(--muted); }
+.chart { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px; min-width: 0; }
+.chart canvas { display: block; max-width: 100%; }
+.status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; padding: 16px; text-align: center; }
+.cross { position: absolute; width: 1px; background: var(--muted); pointer-events: none; }
+.dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; border: 2px solid var(--surface); pointer-events: none; box-sizing: content-box; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
+  padding: 8px 10px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.14); width: max-content; max-width: min(320px, 80vw); z-index: 2;
+}
+.tip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tip .num { font-family: var(--font-data); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tip .head { font-weight: 600; margin-bottom: 2px; }
+.sw { display: inline-block; width: 20px; height: 0; border-top: 2.5px solid currentColor; vertical-align: middle; margin-right: 7px; }
+.sw.dot-style { border-top-style: dotted; } .sw.dash-style { border-top-style: dashed; } .sw.thin { border-top-width: 1.5px; }
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px 28px; font-size: 13.5px; }
+.legend .item { display: grid; gap: 1px; }
+.legend .sub { color: var(--muted); font-size: 12.5px; }
+.legend label { display: flex; gap: 8px; align-items: center; color: var(--ink); cursor: pointer; }
+.scale { display: grid; gap: 4px; }
+.scale .bar { height: 12px; border-radius: 2px; background: var(--ramp); border: 1px solid var(--rule); }
+.scale .ticks { position: relative; height: 16px; font: 11.5px var(--font-data); color: var(--muted); }
+.scale .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.scale .ticks span:first-child { transform: none; }
+.scale .ticks span:last-child { transform: translateX(-100%); }
+.timing { font: 13px var(--font-data); color: var(--muted); font-variant-numeric: tabular-nums; }
+details { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 14px; }
+summary { cursor: pointer; font-weight: 500; }
+.table-wrap { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; font: 13px var(--font-data); font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
+.notes { border-top: 1px solid var(--rule); padding-top: 14px; color: var(--muted); font-size: 14px; display: grid; gap: 8px; max-width: 72ch; }
+.notes p { margin: 0; }
+.notes b { color: var(--ink); font-weight: 600; }
+</style>
+
+<div class="page">
+  <header>
+    <h1>Il gioco della moneta</h1>
+    <p class="lede" id="lede">@LEDE@</p>
+  </header>
+
+  <form class="controls" id="controls">
+    <div class="field"><label for="players">Giocatori</label>
+      <select id="players">
+        <option value="1000">1.000</option>
+        <option value="10000" selected>10.000</option>
+        <option value="100000">100.000</option>
+        <option value="1000000">1.000.000</option>
+      </select></div>
+    <div class="field"><label for="rounds">Round</label>
+      <select id="rounds">
+        <option value="100">100</option>
+        <option value="250">250</option>
+        <option value="500">500</option>
+        <option value="1000" selected>1.000</option>
+      </select></div>
+    <div class="field"><label for="seed">Seed</label>
+      <input id="seed" type="number" min="0" max="9007199254740991" step="1" value="2022"></div>
+    <button type="submit" id="play">Gioca</button>
+    <button type="button" class="secondary" id="reseed">Seed casuale</button>
+  </form>
+
+  <section class="tiles" id="tiles" aria-label="Riepilogo del run"></section>
+
+  <section class="chart" id="chart">
+    <canvas id="plot" role="img" aria-label="Grafico della ricchezza dei giocatori"></canvas>
+    <div class="cross" id="cross" hidden></div>
+    <div id="dots"></div>
+    <div class="status" id="status">Simulazione in corso…</div>
+    <div class="tip" id="tip" hidden></div>
+  </section>
+
+  <section class="legend" id="legend" aria-label="Legenda"></section>
+  <div class="timing" id="timing"></div>
+
+  <details>
+    <summary>Tabella dei valori</summary>
+    <div class="table-wrap"><table id="table"></table></div>
+  </details>
+
+  <section class="notes">
+    <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Nessuna cella sotto una soglia viene disegnata sopra la sua linea.</p>
+    <p><b>Le linee.</b> Le tre linee colorate spesse sono giocatori veri di questo run. Le linee arancioni sottili sono i giocatori che in quel round hanno almeno 1 miliardo €: si possono contare, round per round.</p>
+    <p><b>Riproducibile.</b> La moneta del giocatore <i>i</i> al round <i>t</i> è un bit di Philox4x32-10 con chiave il seed. Stesso seed, stessi giocatori, su ogni dispositivo e con qualsiasi numero di thread.</p>
+    <p><b>Motore.</b> Simulazione, testi e pixel del grafico sono calcolati in Rust compilato in WebAssembly, divisi tra i core del dispositivo. Il JavaScript della pagina sposta solo i dati e li mette sullo schermo.</p>
+  </section>
+</div>
+
+<script>
+"use strict";
+const WASM_B64 = "@WASM@";
+const mod = WebAssembly.compile(Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0)));
+const main = mod.then(m => WebAssembly.instantiate(m));
+const decoder = new TextDecoder();
+const $ = id => document.getElementById(id);
+
+// Worker: one instance of the same module; simulates one range of players.
+const WORKER = `
+let inst;
+onmessage = async (e) => {
+  const d = e.data;
+  if (!inst) inst = await WebAssembly.instantiate(d.mod);
+  const x = inst.exports, cells = d.rounds * (d.rounds + 1), n = d.n;
+  const sizes = [4 * cells, 4 * n, 4 * n, 4 * n, 4 * n, 8 * n];
+  const p = sizes.map(b => x.alloc(b));
+  const rc = x.sim_chunk(d.rounds, d.seedLo, d.seedHi, d.firstBlock, n, ...p);
+  const m = x.memory.buffer;
+  const out = {
+    rc,
+    counts: new Uint32Array(m, p[0], cells).slice(),
+    u32: [1, 2, 3, 4].map(i => new Uint32Array(m, p[i], n).slice()),
+    drawdown: new Float64Array(m, p[5], n).slice(),
+  };
+  sizes.forEach((b, i) => x.dealloc(p[i], b));
+  postMessage(out, [out.counts.buffer, ...out.u32.map(a => a.buffer), out.drawdown.buffer]);
+};`;
+const workerURL = URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }));
+const pool = [];
+const worker = i => { while (pool.length <= i) pool.push(new Worker(workerURL)); return pool[i]; };
+const ask = (w, msg) => new Promise((ok, fail) => { w.onmessage = e => ok(e.data); w.onerror = fail; w.postMessage(msg); });
+const read = (x, len) => decoder.decode(new Uint8Array(x.memory.buffer, x.out_ptr(), len));
+
+let wasm = null, ready = false, drawMs = 0, simText = "";
+
+async function play() {
+  const P = +$("players").value, R = +$("rounds").value;
+  let seed = Math.floor(Number($("seed").value));
+  if (!Number.isSafeInteger(seed) || seed < 0) seed = 0;
+  $("seed").value = String(seed);
+  const seedLo = seed % 4294967296, seedHi = Math.floor(seed / 4294967296);
+  $("play").disabled = true; $("status").hidden = false;
+  $("status").textContent = "Simulazione in corso…";
+  try {
+    const m = await mod;
+    wasm = (await main).exports;
+    if (wasm.run_begin(P, R, seedLo, seedHi) !== 0) throw new Error("parametri fuori intervallo");
+    const threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
+    const blocks = Math.ceil(P / 64), per = Math.ceil(blocks / threads) * 64;
+    const t0 = performance.now(), jobs = [];
+    for (let w = 0; w * per < P; w++) {
+      jobs.push(ask(worker(w), { mod: m, rounds: R, seedLo, seedHi, firstBlock: w * per / 64, n: Math.min(per, P - w * per) }));
+    }
+    const parts = await Promise.all(jobs);
+    const simMs = performance.now() - t0;
+    parts.forEach((part, w) => {
+      if (part.rc !== 0) throw new Error("simulazione rifiutata");
+      const first = w * per, n = part.drawdown.length;
+      new Uint32Array(wasm.memory.buffer, wasm.run_slot(0, 0), part.counts.length).set(part.counts);
+      wasm.run_add_scratch();
+      part.u32.forEach((a, i) => new Uint32Array(wasm.memory.buffer, wasm.run_slot(i + 1, first), n).set(a));
+      new Float64Array(wasm.memory.buffer, wasm.run_slot(5, first), n).set(part.drawdown);
+    });
+    if (wasm.run_finish(simMs, parts.length) !== 0) throw new Error("risultati incompleti");
+    ready = true;
+    show(JSON.parse(read(wasm, wasm.view())));
+    draw();
+    $("status").hidden = true;
+  } catch (err) {
+    $("status").textContent = `Non è stato possibile simulare: ${err.message}. Ricarica la pagina e riprova.`;
+  } finally {
+    $("play").disabled = false;
+  }
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function show(v) {
+  $("lede").textContent = v.lede;
+  $("plot").setAttribute("aria-label", v.aria);
+  $("tiles").replaceChildren(...v.tiles.map(t => { const d = el("div", "tile"); d.append(el("span", "v", t.value), el("span", "k", t.label)); return d; }));
+
+  const items = v.players.map(p => {
+    const d = el("div", "item"), top = el("span"), sw = el("span", "sw");
+    sw.style.color = `var(--p${p.slot + 1})`;
+    top.append(sw, document.createTextNode(p.name));
+    d.append(top, el("span", "sub", p.detail));
+    return d;
+  });
+  const lines = el("div", "item");
+  v.lines.forEach(l => { const s = el("span"), sw = el("span", `sw ${l.style === "dot" ? "dot-style" : l.style === "dash" ? "dash-style" : ""}`); sw.style.color = "var(--ink)"; s.append(sw, document.createTextNode(l.label)); lines.append(s); });
+  const rich = el("div", "item"), rs = el("span"), rsw = el("span", "sw thin");
+  rsw.style.color = "var(--p2)";
+  rs.append(rsw, document.createTextNode(v.rich.note));
+  rich.append(rs);
+  if (v.rich.count > 0) {
+    const lab = el("label"), box = document.createElement("input");
+    box.type = "checkbox"; box.id = "richfull"; box.checked = !!window.__richFull;
+    box.addEventListener("change", () => { window.__richFull = box.checked; draw(); });
+    lab.append(box, document.createTextNode(v.rich.toggle));
+    rich.append(lab);
+  }
+  const scale = el("div", "item scale"), ticks = el("div", "ticks");
+  scale.append(el("span", null, v.scale.title), el("div", "bar"), ticks);
+  v.scale.ticks.forEach(t => { const s = el("span", null, t.label); s.style.left = `${(100 * t.pos).toFixed(2)}%`; ticks.append(s); });
+  $("legend").replaceChildren(...items, lines, rich, scale);
+
+  const table = $("table"), head = el("tr");
+  v.table.head.forEach(h => head.append(el("th", null, h)));
+  table.replaceChildren(head, ...v.table.rows.map(r => { const tr = el("tr"); r.forEach(c => tr.append(el("td", null, c))); return tr; }));
+  simText = v.timing;
+}
+
+const isDark = () => {
+  const t = document.documentElement.getAttribute("data-theme");
+  return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+};
+
+function draw() {
+  if (!ready) return;
+  const chart = $("chart"), canvas = $("plot");
+  const cssW = Math.max(280, chart.clientWidth - 20);
+  const cssH = Math.round(Math.min(560, Math.max(320, cssW * 0.56)));
+  const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  const t0 = performance.now();
+  const ptr = wasm.render(cssW, cssH, dpr, isDark() ? 1 : 0, window.__richFull ? 1 : 0);
+  const w = wasm.render_width(), h = wasm.render_height();
+  canvas.width = w; canvas.height = h;
+  canvas.style.width = `${cssW}px`; canvas.style.height = `${cssH}px`;
+  const px = new Uint8ClampedArray(wasm.memory.buffer, ptr, w * h * 4).slice();
+  canvas.getContext("2d").putImageData(new ImageData(px, w, h), 0, 0);
+  drawMs = performance.now() - t0;
+  $("timing").textContent = `${simText} · disegno ${Math.round(drawMs)} ms`;
+  hide();
+}
+
+function hide() { $("tip").hidden = true; $("cross").hidden = true; $("dots").replaceChildren(); }
+
+function hover(ev) {
+  if (!ready) return;
+  const r = $("plot").getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const h = JSON.parse(read(wasm, wasm.hover(x, y)));
+  if (!h.inside) { hide(); return; }
+  const cross = $("cross");
+  cross.hidden = false; cross.style.left = `${10 + h.x}px`;
+  cross.style.top = `${10 + h.top}px`; cross.style.height = `${h.bottom - h.top}px`;
+  $("dots").replaceChildren(...h.players.map(p => { const d = el("div", "dot"); d.style.left = `${10 + h.x}px`; d.style.top = `${10 + p.y}px`; d.style.background = `var(--p${p.slot + 1})`; return d; }));
+  const tip = $("tip");
+  const row = (label, value, slot) => {
+    const d = el("div", "row"), l = el("span");
+    if (slot !== undefined) { const sw = el("span", "sw"); sw.style.color = `var(--p${slot + 1})`; l.append(sw); }
+    l.append(document.createTextNode(label));
+    d.append(l, el("span", "num", value));
+    return d;
+  };
+  const rows = [el("div", "head", h.head), ...h.players.map(p => row(p.label, p.value, p.slot)), ...h.rows.map(q => row(q.label, q.value))];
+  if (h.cell) rows.push(row(h.cell.label, h.cell.value));
+  tip.replaceChildren(...rows);
+  tip.hidden = false;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const left = x + 18 + tw > r.width ? x - tw - 8 : x + 18;
+  tip.style.left = `${Math.max(0, left) + 10}px`;
+  tip.style.top = `${Math.max(4, Math.min(r.height - th, y - 20)) + 10}px`;
+}
+
+$("plot").addEventListener("pointermove", hover);
+$("plot").addEventListener("pointerleave", hide);
+$("controls").addEventListener("submit", e => { e.preventDefault(); play(); });
+$("reseed").addEventListener("click", () => {
+  const a = new Uint32Array(2); crypto.getRandomValues(a);
+  $("seed").value = String((a[0] & 0x1fffff) * 4294967296 + a[1]);
+  play();
+});
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(draw, 120); });
+new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+window.__coin = { play, draw, wasm: () => wasm };
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(play);
+</script>

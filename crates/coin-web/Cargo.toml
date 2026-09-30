@@ -1,0 +1,15 @@
+[package]
+name = "coin-web"
+description = "WebAssembly entry points of the coin-game page: simulation chunks, view text, chart pixels, hover"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+coin-core = { path = "../coin-core" }
+coin-chart = { path = "../coin-chart" }
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }

@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+description = "Build the web page, render the chart to PNG, run benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+coin-core = { path = "../crates/coin-core" }
+coin-chart = { path = "../crates/coin-chart", features = ["png"] }
+coin-web = { path = "../crates/coin-web" }

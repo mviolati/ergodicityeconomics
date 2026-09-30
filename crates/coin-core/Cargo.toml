@@ -1,0 +1,9 @@
+[package]
+name = "coin-core"
+description = "Peters' coin game: every player's path, Philox4x32-10 coins, exact summaries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

@@ -1,0 +1,15 @@
+[package]
+name = "coin-chart"
+description = "Pure-Rust renderer of the coin-game chart: density of all players plus individual paths"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+png = ["tiny-skia/png-format"]
+
+[dependencies]
+coin-core = { path = "../coin-core" }
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+ab_glyph = "0.2"

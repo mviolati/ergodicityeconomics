@@ -1,101 +1,94 @@
+# Ergodicity Economics: the coin game
 
-<!-- README.md is generated from README.Rmd. Please edit that file -->
+Each round, every player tosses a coin. Heads: the wealth of the player increases by 50%. Tails: it
+decreases by 40%. All players start with 100 €. The expected value increases by 5% each round, but the
+typical player loses almost everything. This is the example of Fig. 2 in Ole Peters,
+[*The ergodicity problem in economics*](https://rdcu.be/cS2t3) (Nature Physics, 2019). Emanuel Derman
+states the same point in [a tweet](https://twitter.com/EmanuelDerman/status/1532473709239455745).
 
-# Ergodicity Economics
+This project simulates the full path of every player and shows all of them in one chart. The code is
+Rust only: simulation, text, chart pixels and the build of the web page.
 
-## Replicating Example Gamble
+![1,000,000 players, 1,000 rounds, seed 2022](docs/chart.png)
 
-First objective was to replicate Fig. 2 of this
-[paper](https://rdcu.be/cS2t3). For non-technical may be hard to
-understand what is happening without modeling.
+*1,000,000 players, 1,000 rounds, seed 2022. 277 players reach 1 billion € at least once. At most 43 of
+them are above 1 billion € in the same round. 243 of the 277 end below 1 €.*
 
-Emanuel Derman’s
-[tweet](https://twitter.com/EmanuelDerman/status/1532473709239455745)
-stresses out that *“a 200% - 50% equal-probability gamble has an
-expected payoff of 125% if played once, but if you keep playing the
-eventual return is 50% x 200% = 100% in long run, no gain.”*
+## How to read the chart
 
-Next step is to implement a Shiny application in order let the user play
-with inputs, and show that increasing the number of players increases
-the probability that the ensemble averages would match the expected
-value.
+| Mark | Meaning |
+|---|---|
+| Grey background | Number of players in each cell (round × wealth level). A cell that stands out more from the background holds more players. The scale is logarithmic; the page shows it with numbers. If more than one round or level falls on one pixel, the pixel shows the fullest cell. No cell is drawn on the other side of a threshold line. |
+| Thin orange lines | The players who have at least 1 billion € in that round. You can count them round by round. An option on the page shows their full paths. |
+| Thick coloured lines | Three real players of the run: the richest at the end; among the players who reached 1 billion €, the one who ended lowest; the first player below 1 €. Each role is decided over all players. |
+| Solid / dotted / dashed line | Median player / mean of all players / expected value. |
 
-## Code Optimization
+## Design
 
-In order to try to optimise the code for a larger tibble, I have
-momentarily divided the code in 3 different phases:
+- **Every path is reproducible.** The coin of player `i` at round `t` is one bit of Philox4x32-10
+  (counter `(i / 64, t)`, key = seed). Philox is counter-based: any path is a function of `(seed, i)` only.
+  The result is the same on every device and with any number of threads.
+- **Exact numbers.** For each player the simulation stores integers only: heads at the end, round and heads
+  of the peak, first round below 1 €. One function (`Lattice::at`) converts `(round, heads)` to wealth. A test
+  checks every lattice point up to 2,000 rounds: none is closer than 1e-9 (log10) to a threshold, so each
+  threshold test in `f64` is exact.
+- **Values are truncated, not rounded.** A shown value is never above the true value. A player below
+  1 billion € never shows as "1,00 mld €".
 
-1.  Tibble Generation
+## Layout
 
-2.  Transformation
+| Path | Contents |
+|---|---|
+| `crates/coin-core` | Philox4x32-10, simulation, per-player summaries, density, ensemble lines, headline figures, Italian number format |
+| `crates/coin-chart` | Chart renderer (tiny-skia, IBM Plex Sans outlines), palette, density rasterisation |
+| `crates/coin-web` | WebAssembly entry points, page text (JSON), tooltip |
+| `web/index.html` | Page template: markup, CSS, and the JavaScript that moves bytes between workers, WebAssembly and the screen |
+| `xtask` | `web`, `png` and `bench` commands |
 
-3.  Plotting
+## Commands
 
-The code below is taking the same input given in the paper.
+Requirements: Rust 1.80 or later, and the WebAssembly target:
 
-### Tibble Generation
-
-The bottleneck here is replicate, which is nesting sapply, that is
-nesting lapply. So with a large number of players a lot of vectors are
-created through lapply.
-
-``` r
-assign("EV", ((0.6 * 0.5) + (1.5 * 0.5)), envir = .GlobalEnv)
-df <- as_tibble(replicate(150,
-                          cumprod(sample(
-                            c(0.6, 1.5),
-                            size = 1000,
-                            replace = TRUE
-                          ))))
+```sh
+rustup target add wasm32-unknown-unknown
 ```
 
-### Transformation
+| Command | Result |
+|---|---|
+| `cargo test --workspace --release` | All tests |
+| `cargo xtask web` | `dist/index.html` (standalone page) and `dist/fragment.html` (the same page without the document skeleton) |
+| `cargo xtask png --players 1000000 --seed 2022 --theme dark --out chart.png` | The chart as PNG, rendered natively |
+| `cargo xtask bench` | Native simulation speed |
 
-The bottleneck is on making the tibble longer in order to let ggplot
-properly work.
+To open the page, serve `dist/` with any static server, for example `python3 -m http.server -d dist`.
 
-``` r
-df <-   pivot_longer(
-    mutate(
-      rowid_to_column(df, "rounds"),
-      ensemble_avg = rowMeans(df),
-      ensemble_median = apply(df, 1, median),
-      expected_value = EV ^ rounds
-    ),
-    cols = !1,
-    names_to = "individual"
-  )
-```
+## Verification
 
-### Plotting
+The tests check:
 
-Plotting is the biggest bottleneck, but should be addressed directly
-while developing the shiny app.
+1. Philox4x32-10 against the Random123 known-answer vectors.
+2. The simulation against an independent pure-Python implementation that compares wealth as exact fractions
+   (`crates/coin-core/tests/golden.txt`).
+3. The fast simulation, the density, the ensemble lines and the headline figures against brute-force
+   recomputation from re-created paths.
+4. Same results with 1 to 7 threads; adding players does not change the first ones.
+5. Density against Binomial(t, 1/2) (chi-square, 3 seeds, 5 rounds); no correlation between neighbour rounds
+   or neighbour players.
+6. Rasterisation: each pixel matches its definition; every occupied cell is visible at every tested size;
+   isolated cells are not enlarged; no cell paints on the wrong side of a threshold.
+7. Every player role name is true for 80 runs; singular and plural texts; JSON escaping.
 
-``` r
-focus <- c("ensemble_avg", "expected_value", "ensemble_median")
+## Speed
 
-ggplot() +
-  geom_line(
-    subset(df, !individual %in% focus),
-    mapping = aes(x = rounds, y = value, group = individual),
-    color = "grey",
-    size = 0.5,
-    alpha = 0.2
-  ) +
-  geom_line(
-    subset(df, individual %in% focus),
-    mapping = aes(x = rounds, y = value, color = individual),
-    size = 1
-  ) +
-  scale_y_log10(
-    breaks = trans_breaks("log10", function(x)
-      10 ^ x),
-    labels = trans_format("log10", math_format(10 ^ .x))
-  ) +
-  labs(color = "") +
-  theme_bw() +
-  theme(legend.position = "bottom")
-```
+Measured in this project's development container (4 cores), 1,000 rounds:
 
-![](README-unnamed-chunk-4-1.png)<!-- -->
+| Players | Native, 4 threads | Browser (Chromium, WebAssembly, 4 workers) |
+|---|---|---|
+| 10,000 | 0.03 s | 0.05 s simulation, 0.05 s chart |
+| 100,000 | 0.13 s | 0.29 s simulation, 0.05 s chart |
+| 1,000,000 | 0.92 s | 2.4 s simulation, 0.12 s chart |
+
+## License
+
+Apache License 2.0 (`LICENSE.md`). IBM Plex Sans: SIL Open Font License 1.1
+(`crates/coin-chart/assets/IBMPlexSans-LICENSE.txt`).
