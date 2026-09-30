@@ -129,6 +129,39 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
+/// Notice for the parts of the Rust standard library that are compiled into the module.
+const RUST_STD_NOTICE: &str = r#"
+The Rust Standard Library (core, alloc, compiler_builtins, dlmalloc) is licensed under the Apache
+License, Version 2.0 or the MIT license, at your option. Copyright: The Rust Project Developers
+(see https://thanks.rust-lang.org); dlmalloc: Alex Crichton. The full list of notices is the file
+COPYRIGHT-library.html of the Rust toolchain that built this page.
+
+The math functions of compiler_builtins (libm) are derived from musl libc:
+Copyright (c) 2005-2020 Rich Felker, et al. (MIT license, text below)
+and from FreeBSD msun:
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+Developed at SunPro, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this software is freely granted, provided that
+this notice is preserved.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+"#;
+
 /// `cargo metadata` for the WebAssembly target, as JSON.
 fn metadata(root: &Path) -> serde_json::Value {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -216,8 +249,11 @@ fn notices(root: &Path, meta: &serde_json::Value) -> String {
     let font =
         std::fs::read_to_string(root.join("crates/coin-chart/assets/IBMPlexSans-LICENSE.txt")).expect("font license");
     texts.push((font.trim().to_string(), vec!["IBM Plex Sans (font del grafico)".into()]));
+    // The Rust standard library is linked into the module too (core, alloc, compiler_builtins with
+    // its libm port, dlmalloc).
+    texts.push((RUST_STD_NOTICE.trim().to_string(), vec!["Libreria standard di Rust".into()]));
     let mut out = format!(
-        "<details class=\"notices\"><summary>Licenze del software incluso nella pagina</summary><ul>{body}<li>IBM Plex Sans — OFL-1.1</li></ul>"
+        "<details class=\"notices\"><summary>Licenze del software incluso nella pagina</summary><ul>{body}<li>IBM Plex Sans — OFL-1.1</li><li>Libreria standard di Rust (core, alloc, compiler_builtins, dlmalloc) — MIT OR Apache-2.0; parti di libm da musl (MIT) e FreeBSD msun</li></ul>"
     );
     for (t, who) in texts {
         out.push_str(&format!("<p><b>{}</b></p><pre>{}</pre>", html_escape(&who.join(", ")), html_escape(&t)));
@@ -236,10 +272,16 @@ fn web() {
     let home = std::env::var("CARGO_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cargo"));
-    let flags = format!("--remap-path-prefix={}=/src --remap-path-prefix={}=/cargo", root.display(), home.display());
+    // CARGO_ENCODED_RUSTFLAGS separates flags with 0x1f, so paths with spaces stay whole.
+    let flags = [
+        format!("--remap-path-prefix={}=/src", root.display()),
+        format!("--remap-path-prefix={}=/cargo", home.display()),
+    ]
+    .join("\u{1f}");
     let status = Command::new(cargo)
         .current_dir(&root)
-        .env("RUSTFLAGS", flags)
+        .env_remove("RUSTFLAGS")
+        .env("CARGO_ENCODED_RUSTFLAGS", flags)
         .args(["build", "--release", "-p", "coin-web", "--target", "wasm32-unknown-unknown"])
         .status()
         .expect("run cargo");

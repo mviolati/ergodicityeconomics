@@ -26,8 +26,12 @@ pub struct Theme {
     pub muted: Rgb,
     /// Grid lines and borders.
     pub rule: Rgb,
-    /// Buttons and focus.
+    /// Focus ring.
     pub accent: Rgb,
+    /// Background of the primary button (white text on it: at least 4.5:1).
+    pub button: Rgb,
+    /// Text of the secondary button on the page background (at least 4.5:1).
+    pub accent_text: Rgb,
     /// The three highlighted players (categorical slots 1-3, validated for colour-vision deficiency).
     pub players: [Rgb; 3],
     /// Density ramp: one player (lo) to the fullest cell (hi).
@@ -44,6 +48,8 @@ pub const LIGHT: Theme = Theme {
     muted: Rgb(0x5b, 0x5f, 0x68),
     rule: Rgb(0xe3, 0xe4, 0xe6),
     accent: Rgb(0x2a, 0x78, 0xd6),
+    button: Rgb(0x24, 0x70, 0xcc),
+    accent_text: Rgb(0x24, 0x70, 0xcc),
     players: [Rgb(0x2a, 0x78, 0xd6), Rgb(0xeb, 0x68, 0x34), Rgb(0x1b, 0xaf, 0x7a)],
     dens_lo: Rgb(0xd0, 0xce, 0xc8),
     dens_hi: Rgb(0x33, 0x32, 0x2f),
@@ -58,6 +64,8 @@ pub const DARK: Theme = Theme {
     muted: Rgb(0xa3, 0xa7, 0xb0),
     rule: Rgb(0x2c, 0x2e, 0x33),
     accent: Rgb(0x39, 0x87, 0xe5),
+    button: Rgb(0x2a, 0x6f, 0xc9),
+    accent_text: Rgb(0x39, 0x87, 0xe5),
     players: [Rgb(0x39, 0x87, 0xe5), Rgb(0xd9, 0x59, 0x26), Rgb(0x19, 0x9e, 0x70)],
     dens_lo: Rgb(0x3e, 0x3f, 0x45),
     dens_hi: Rgb(0xe0, 0xdf, 0xda),
@@ -117,13 +125,15 @@ impl Theme {
 pub fn css_tokens() -> String {
     fn block(t: &Theme) -> String {
         let mut s = format!(
-            "--bg: {}; --surface: {}; --ink: {}; --muted: {}; --rule: {}; --accent: {}; ",
+            "--bg: {}; --surface: {}; --ink: {}; --muted: {}; --rule: {}; --accent: {}; --button: {}; --accent-text: {}; ",
             t.bg.hex(),
             t.surface.hex(),
             t.ink.hex(),
             t.muted.hex(),
             t.rule.hex(),
-            t.accent.hex()
+            t.accent.hex(),
+            t.button.hex(),
+            t.accent_text.hex()
         );
         for (i, c) in t.players.iter().enumerate() {
             s.push_str(&format!("--p{}: {}; ", i + 1, c.hex()));
@@ -157,6 +167,20 @@ mod tests {
             let rising = lum.windows(2).all(|w| w[1] >= w[0]);
             let falling = lum.windows(2).all(|w| w[1] <= w[0]);
             assert!(if t.dark { rising } else { falling }, "more players must always be further from the surface");
+        }
+    }
+
+    fn contrast(a: Rgb, b: Rgb) -> f64 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn button_text_meets_wcag_aa() {
+        for t in [LIGHT, DARK] {
+            assert!(contrast(Rgb(255, 255, 255), t.button) >= 4.5, "white on button");
+            assert!(contrast(t.accent_text, t.bg) >= 4.5, "secondary button text");
+            assert!(contrast(t.ink, t.surface) >= 4.5 && contrast(t.muted, t.surface) >= 4.5, "body text");
         }
     }
 

@@ -481,8 +481,75 @@ fn put(pixels: &mut [PremultipliedColorU8], dw: usize, x: usize, y: usize, c: Rg
     }
 }
 
+/// Which parts of the chart to draw (all of them for the page; single parts for tests).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layers {
+    pub grid: bool,
+    pub density: bool,
+    pub strip: bool,
+    pub thresholds: bool,
+    pub rich: bool,
+    pub ensemble: bool,
+    pub highlighted: bool,
+    pub frames: bool,
+    pub labels: bool,
+}
+
+impl Layers {
+    pub const ALL: Layers = Layers {
+        grid: true,
+        density: true,
+        strip: true,
+        thresholds: true,
+        rich: true,
+        ensemble: true,
+        highlighted: true,
+        frames: true,
+        labels: true,
+    };
+    pub const NONE: Layers = Layers {
+        grid: false,
+        density: false,
+        strip: false,
+        thresholds: false,
+        rich: false,
+        ensemble: false,
+        highlighted: false,
+        frames: false,
+        labels: false,
+    };
+}
+
+/// Decades that get a grid line and a label: powers of ten in the y range, at most 8 of them.
+pub fn decades(lay: &Layout) -> Vec<i64> {
+    let span = lay.ymax - lay.ymin;
+    let step = [1i64, 2, 5, 10, 20, 50, 100, 200, 500].into_iter().find(|s| span / *s as f64 <= 8.0).unwrap_or(1000);
+    let mut e = (lay.ymin / step as f64).ceil() as i64 * step;
+    let mut out = Vec::new();
+    while (e as f64) <= lay.ymax {
+        out.push(e);
+        e += step;
+    }
+    out
+}
+
+/// Height in device pixels of the strip bar for `n` rich players: proportional to `n / max`,
+/// at least one pixel for any player.
+pub fn bar_height(n: u64, max: u64, h: usize) -> usize {
+    if n == 0 || max == 0 {
+        return 0;
+    }
+    (((n as f64 / max as f64) * h as f64).round() as usize).clamp(1, h)
+}
+
 /// Draws the chart. The result is opaque, so its premultiplied bytes are also straight RGBA.
 pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout) {
+    render_layers(scene, frame, theme, Layers::ALL)
+}
+
+/// Draws the selected parts of the chart, in this order: grid, density, strip, thresholds, rich
+/// players, ensemble lines, highlighted players, frames, labels.
+pub fn render_layers(scene: &Scene<'_>, frame: Frame, theme: &Theme, layers: Layers) -> (Pixmap, Layout) {
     let (dw, dh) = frame.device_size();
     let mut pm = Pixmap::new(dw, dh).expect("non-zero size");
     let s = theme.surface;
@@ -493,44 +560,38 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
     let tf = Transform::from_scale(frame.dpr, frame.dpr);
     let lat = scene.game.lattice();
     let rule = paint(theme.rule, 255);
+    let decs = decades(&lay);
+    let strip = strip_counts(scene, &lay, &sras);
+    let strip_max = strip.iter().copied().max().unwrap_or(0);
 
-    // Grid lines at powers of ten, at most 8 of them.
-    let span = lay.ymax - lay.ymin;
-    let step = [1i64, 2, 5, 10, 20, 50, 100, 200, 500].into_iter().find(|s| span / *s as f64 <= 8.0).unwrap_or(1000);
-    let mut e = (lay.ymin / step as f64).ceil() as i64 * step;
-    let mut decades = Vec::new();
-    while (e as f64) <= lay.ymax {
-        decades.push(e);
-        e += step;
-    }
-    for &d in &decades {
-        if let Some(p) = hline(lay.x, lay.x + lay.w, lay.y_of(d as f64)) {
-            pm.stroke_path(&p, &rule, &stroke(1.0, None), tf, None);
+    if layers.grid {
+        for &d in &decs {
+            if let Some(p) = hline(lay.x, lay.x + lay.w, lay.y_of(d as f64)) {
+                pm.stroke_path(&p, &rule, &stroke(1.0, None), tf, None);
+            }
         }
     }
 
     // Density and strip, written straight into the pixels.
-    let grid = density_grid(scene, &lay, &ras);
-    let max_cell = scene.ensemble.max_cell;
-    let lut: Vec<Rgb> = (0..=255).map(|i| theme.ramp(f64::from(i) / 255.0)).collect();
-    let strip = strip_counts(scene, &lay, &sras);
-    let strip_max = strip.iter().copied().max().unwrap_or(0);
-    {
+    if layers.density || layers.strip {
         let pixels = pm.pixels_mut();
-        for gy in 0..ras.h {
-            for gx in 0..ras.w {
-                let n = grid[gy * ras.w + gx];
-                if n > 0 {
-                    let c = lut[(scale_position(n, max_cell) * 255.0).round() as usize];
-                    put(pixels, dw as usize, ras.ox + gx, ras.oy + gy, c);
+        if layers.density {
+            let grid = density_grid(scene, &lay, &ras);
+            let max_cell = scene.ensemble.max_cell;
+            let lut: Vec<Rgb> = (0..=255).map(|i| theme.ramp(f64::from(i) / 255.0)).collect();
+            for gy in 0..ras.h {
+                for gx in 0..ras.w {
+                    let n = grid[gy * ras.w + gx];
+                    if n > 0 {
+                        let c = lut[(scale_position(n, max_cell) * 255.0).round() as usize];
+                        put(pixels, dw as usize, ras.ox + gx, ras.oy + gy, c);
+                    }
                 }
             }
         }
-        if strip_max > 0 {
+        if layers.strip {
             for (c, &n) in strip.iter().enumerate() {
-                // Bar height proportional to the count; at least one pixel for any player.
-                let h = ((n as f64 / strip_max as f64) * sras.h as f64).round() as usize;
-                let h = if n > 0 { h.max(1) } else { 0 };
+                let h = bar_height(n, strip_max, sras.h);
                 for r in sras.h - h..sras.h {
                     put(pixels, dw as usize, sras.ox + c, sras.oy + r, theme.players[1]);
                 }
@@ -540,52 +601,72 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
 
     // Everything else in the plot is clipped to its device pixels.
     let clip = rect_mask(dw, dh, Transform::identity(), ras.ox as f32, ras.oy as f32, ras.w as f32, ras.h as f32);
-    let rich_bottom = if scene.rich_full { (ras.oy + ras.h) as f32 } else { lay.y_of(lat.rich) * frame.dpr };
-    let rich_clip = rect_mask(
-        dw,
-        dh,
-        Transform::identity(),
-        ras.ox as f32,
-        ras.oy as f32,
-        ras.w as f32,
-        rich_bottom - ras.oy as f32,
-    );
-    let rich_paint = paint(theme.players[1], if theme.dark { 150 } else { 130 });
-    for p in scene.rich_paths {
-        if let Some(path) = polyline(&lay, p) {
-            pm.stroke_path(&path, &rich_paint, &stroke(1.0, None), tf, Some(&rich_clip));
+    let casing = paint(theme.surface, 255);
+    if layers.thresholds {
+        for l in [lat.rich, lat.broke] {
+            if let Some(p) = hline(lay.x, lay.x + lay.w, lay.y_of(l)) {
+                // One pixel, alternating ink and surface: visible on any density, and too thin to
+                // read as a gap in the data. Drawn before the players, so it hides none of them.
+                pm.stroke_path(&p, &casing, &stroke(1.0, None), tf, Some(&clip));
+                pm.stroke_path(&p, &paint(theme.ink, 255), &stroke(1.0, Some((4.0, 4.0))), tf, Some(&clip));
+            }
         }
     }
-    let casing = paint(theme.surface, 255);
-    for l in [lat.rich, lat.broke] {
-        if let Some(p) = hline(lay.x, lay.x + lay.w, lay.y_of(l)) {
-            // One pixel, alternating ink and surface: visible on any density, and too thin to
-            // read as a gap in the data.
-            pm.stroke_path(&p, &casing, &stroke(1.0, None), tf, Some(&clip));
-            pm.stroke_path(&p, &paint(theme.ink, 255), &stroke(1.0, Some((4.0, 4.0))), tf, Some(&clip));
+    if layers.rich {
+        let line_dev = ras.dy(lay.y_of(lat.rich));
+        let rich_bottom = if scene.rich_full { ras.h as f64 } else { line_dev };
+        let rich_clip =
+            rect_mask(dw, dh, Transform::identity(), ras.ox as f32, ras.oy as f32, ras.w as f32, rich_bottom as f32);
+        let rich_paint = paint(theme.players[1], if theme.dark { 150 } else { 130 });
+        for p in scene.rich_paths {
+            if let Some(path) = polyline(&lay, p) {
+                pm.stroke_path(&path, &rich_paint, &stroke(1.0, None), tf, Some(&rich_clip));
+            }
+        }
+        if !scene.rich_full {
+            // A player who crossed the line by less than a pixel still gets one pixel per round
+            // above it, just above the line.
+            let line_row = line_dev.floor();
+            if line_row >= 1.0 {
+                let pixels = pm.pixels_mut();
+                for p in scene.rich_paths {
+                    for (t, &v) in p.iter().enumerate() {
+                        if v < lat.rich {
+                            continue;
+                        }
+                        let col = columns_of_round(&lay, &ras, t as u32).start;
+                        let row = ras.dy(lay.y_of(v)).floor().clamp(0.0, line_row - 1.0) as usize;
+                        put(pixels, dw as usize, ras.ox + col, ras.oy + row, theme.players[1]);
+                    }
+                }
+            }
         }
     }
     let ink = paint(theme.ink, 255);
     let en = scene.ensemble;
-    for (values, width, dash) in
-        [(&en.expected, 1.4, Some((7.0, 4.0))), (&en.mean, 1.6, Some((1.5, 3.0))), (&en.median, 1.6, None)]
-    {
-        if let Some(p) = polyline(&lay, values) {
-            // A surface-coloured casing keeps the line readable over any density.
-            pm.stroke_path(&p, &casing, &stroke(width + 2.0, dash), tf, Some(&clip));
-            pm.stroke_path(&p, &ink, &stroke(width, dash), tf, Some(&clip));
+    if layers.ensemble {
+        for (values, width, dash) in
+            [(&en.expected, 1.4, Some((7.0, 4.0))), (&en.mean, 1.6, Some((1.5, 3.0))), (&en.median, 1.6, None)]
+        {
+            if let Some(p) = polyline(&lay, values) {
+                // A surface-coloured casing keeps the line readable over any density.
+                pm.stroke_path(&p, &casing, &stroke(width + 2.0, dash), tf, Some(&clip));
+                pm.stroke_path(&p, &ink, &stroke(width, dash), tf, Some(&clip));
+            }
         }
     }
-    for (p, slot) in scene.highlighted {
-        if let Some(path) = polyline(&lay, p) {
-            pm.stroke_path(&path, &casing, &stroke(4.0, None), tf, Some(&clip));
-            pm.stroke_path(&path, &paint(theme.players[*slot % 3], 255), &stroke(2.0, None), tf, Some(&clip));
+    if layers.highlighted {
+        for (p, slot) in scene.highlighted {
+            if let Some(path) = polyline(&lay, p) {
+                pm.stroke_path(&path, &casing, &stroke(4.0, None), tf, Some(&clip));
+                pm.stroke_path(&path, &paint(theme.players[*slot % 3], 255), &stroke(2.0, None), tf, Some(&clip));
+            }
         }
     }
 
     // Frames in whole device pixels just outside the plot and the strip: no data pixel is covered.
-    let th = (frame.dpr.round() as usize).max(1);
-    {
+    if layers.frames {
+        let th = (frame.dpr.round() as usize).max(1);
         let pixels = pm.pixels_mut();
         for r in [&ras, &sras] {
             for (x, y, w, h) in frame_rects(r, th) {
@@ -599,32 +680,34 @@ pub fn render(scene: &Scene<'_>, frame: Frame, theme: &Theme) -> (Pixmap, Layout
     }
 
     // Labels, all outside the data areas.
-    let muted = |size, align| Label { size, align, color: theme.muted };
-    for (l, v) in [(lat.rich, scene.game.rich), (lat.broke, scene.game.broke)] {
-        text(&mut pm, tf, &short_label(v), lay.x + lay.w + 5.0, lay.y_of(l) + 4.0, muted(11.0, Align::Left));
+    if layers.labels {
+        let muted = |size, align| Label { size, align, color: theme.muted };
+        for (l, v) in [(lat.rich, scene.game.rich), (lat.broke, scene.game.broke)] {
+            text(&mut pm, tf, &short_label(v), lay.x + lay.w + 5.0, lay.y_of(l) + 4.0, muted(11.0, Align::Left));
+        }
+        for &d in &decs {
+            power_label(&mut pm, tf, d, lay.x - 8.0, lay.y_of(d as f64) + 4.0, theme.muted);
+        }
+        let rich = short_label(scene.game.rich);
+        let titles = if strip_max > 0 {
+            [format!("Giocatori sopra {rich}, round per round"), format!("Sopra {rich}, per round")]
+        } else {
+            [format!("Giocatori sopra {rich}: nessuno, in nessun round"), format!("Sopra {rich}: nessuno")]
+        };
+        let title = titles.iter().find(|t| text::width(t, 12.0) <= lay.w).unwrap_or(&titles[1]);
+        let title_style = Label { size: 12.0, align: Align::Left, color: theme.ink };
+        text(&mut pm, tf, title, lay.x, lay.strip_y - 8.0, title_style);
+        if strip_max > 0 {
+            let max_txt = coin_core::fmt::int(strip_max);
+            text(&mut pm, tf, &max_txt, lay.x - 8.0, lay.strip_y + 9.0, muted(11.0, Align::Right));
+            text(&mut pm, tf, "0", lay.x - 8.0, lay.strip_y + lay.strip_h, muted(11.0, Align::Right));
+        }
+        let base = lay.strip_y + lay.strip_h + 18.0;
+        for (label, x, align) in round_ticks(&lay) {
+            text(&mut pm, tf, &label, x, base, muted(12.0, align));
+        }
+        text(&mut pm, tf, "round", lay.x - 8.0, base, muted(12.0, Align::Right));
     }
-    for &d in &decades {
-        power_label(&mut pm, tf, d, lay.x - 8.0, lay.y_of(d as f64) + 4.0, theme.muted);
-    }
-    let rich = short_label(scene.game.rich);
-    let titles = if strip_max > 0 {
-        [format!("Giocatori sopra {rich}, round per round"), format!("Sopra {rich}, per round")]
-    } else {
-        [format!("Giocatori sopra {rich}: nessuno, in nessun round"), format!("Sopra {rich}: nessuno")]
-    };
-    let title = titles.iter().find(|t| text::width(t, 12.0) <= lay.w).unwrap_or(&titles[1]);
-    let title_style = Label { size: 12.0, align: Align::Left, color: theme.ink };
-    text(&mut pm, tf, title, lay.x, lay.strip_y - 8.0, title_style);
-    if strip_max > 0 {
-        let max_txt = coin_core::fmt::int(strip_max);
-        text(&mut pm, tf, &max_txt, lay.x - 8.0, lay.strip_y + 9.0, muted(11.0, Align::Right));
-        text(&mut pm, tf, "0", lay.x - 8.0, lay.strip_y + lay.strip_h, muted(11.0, Align::Right));
-    }
-    let base = lay.strip_y + lay.strip_h + 18.0;
-    for (label, x, align) in round_ticks(&lay) {
-        text(&mut pm, tf, &label, x, base, muted(12.0, align));
-    }
-    text(&mut pm, tf, "round", lay.x - 8.0, base, muted(12.0, Align::Right));
     (pm, lay)
 }
 
@@ -651,7 +734,11 @@ mod tests {
         Frame { css_w: 733.0, css_h: 411.0, dpr: 1.25 }, // fractional ratio
     ];
 
-    /// Reference: the definition, pixel by pixel.
+    /// Independent reference, pixel by pixel from the definitions (without columns_of_round /
+    /// rows_of_cell): a column shows the round whose span holds its centre, plus any round whose
+    /// span holds no column centre and whose own x falls in the column; a row shows the occupied
+    /// cell whose band holds its centre, plus any cell whose band holds no row centre and whose value
+    /// falls in the row (moved off a threshold line); the pixel keeps the fullest.
     #[test]
     fn density_grid_matches_its_definition() {
         let (game, counts, e) = parts(Game::peters(60, 11), 3000);
@@ -661,17 +748,57 @@ mod tests {
             let lay = layout(&sc, frame);
             let ras = lay.raster(frame.dpr);
             let grid = density_grid(&sc, &lay, &ras);
+            let dpr = f64::from(frame.dpr);
+            // device x (relative) -> rounds, device y (relative) -> log10 wealth
+            let round_at = |dx: f64| ((dx + ras.ox as f64) / dpr - f64::from(lay.x)) / f64::from(lay.w) * 60.0;
+            let wealth_at = |dy: f64| {
+                lay.ymax - ((dy + ras.oy as f64) / dpr - f64::from(lay.y)) / f64::from(lay.h) * (lay.ymax - lay.ymin)
+            };
+            let dev_y = |v: f64| (f64::from(lay.y_of(v)) * dpr) - ras.oy as f64;
+            let dev_x = |t: f64| (f64::from(lay.x_of(t)) * dpr) - ras.ox as f64;
             let mut want = vec![0u32; ras.w * ras.h];
-            for t in 0..=game.rounds {
-                for c in columns_of_round(&lay, &ras, t) {
-                    for (k, n) in cells(&sc, t) {
-                        for r in rows_of_cell(&lay, &ras, &lat, t, k) {
+            for t in 0..=60u32 {
+                let span = (f64::from(t) - 0.5, f64::from(t) + 0.5);
+                let mut cols: Vec<usize> = (0..ras.w)
+                    .filter(|&c| {
+                        let u = round_at(c as f64 + 0.5);
+                        u >= span.0 && u < span.1
+                    })
+                    .collect();
+                if cols.is_empty() {
+                    cols.push((dev_x(f64::from(t)).floor().max(0.0) as usize).min(ras.w - 1));
+                }
+                for (k, n) in cells(&sc, t) {
+                    let (lo, hi) = band(&lat, t, k);
+                    let mut rows: Vec<usize> = (0..ras.h)
+                        .filter(|&r| {
+                            let v = wealth_at(r as f64 + 0.5);
+                            v >= lo && v < hi
+                        })
+                        .collect();
+                    if rows.is_empty() {
+                        let l = lat.at(t, k);
+                        let mut r = (dev_y(l).floor().max(0.0) as usize).min(ras.h - 1);
+                        for thr in [lat.rich, lat.broke] {
+                            let centre = r as f64 + 0.5;
+                            if l >= thr && centre > dev_y(thr) && r > 0 {
+                                r -= 1;
+                            } else if l < thr && centre < dev_y(thr) && r + 1 < ras.h {
+                                r += 1;
+                            }
+                        }
+                        rows.push(r);
+                    }
+                    for &c in &cols {
+                        for &r in &rows {
                             want[r * ras.w + c] = want[r * ras.w + c].max(n);
                         }
                     }
                 }
             }
-            assert_eq!(grid, want, "{frame:?}");
+            let diff = grid.iter().zip(&want).filter(|(a, b)| a != b).count();
+            // Pixel centres that sit exactly on a band edge may fall either way by rounding.
+            assert!(diff * 1000 <= grid.len(), "{diff} of {} pixels differ in {frame:?}", grid.len());
         }
     }
 
@@ -729,9 +856,16 @@ mod tests {
             let grid = density_grid(&sc, &lay, &ras);
             for t in 0..=1000u32 {
                 for (k, n) in cells(&sc, t) {
-                    let seen = columns_of_round(&lay, &ras, t)
-                        .any(|c| rows_of_cell(&lay, &ras, &lat, t, k).any(|r| grid[r * ras.w + c] >= n));
+                    let rows = rows_of_cell(&lay, &ras, &lat, t, k);
+                    let seen = columns_of_round(&lay, &ras, t).any(|c| rows.clone().any(|r| grid[r * ras.w + c] >= n));
                     assert!(seen, "cell t={t} k={k} not visible in {frame:?}");
+                    // ... and at its own place, not clamped to an edge.
+                    let (lo, hi) = band(&lat, t, k);
+                    let (top, bottom) = (ras.dy(lay.y_of(hi)), ras.dy(lay.y_of(lo)));
+                    assert!(
+                        rows.start as f64 >= top - 1.0 && rows.end as f64 <= bottom + 1.0,
+                        "cell t={t} k={k} misplaced"
+                    );
                 }
             }
         }
@@ -871,10 +1005,196 @@ mod tests {
         }
     }
 
+    fn rgb(p: PremultipliedColorU8) -> Rgb {
+        Rgb(p.red(), p.green(), p.blue())
+    }
+
+    fn only(f: impl Fn(&mut Layers)) -> Layers {
+        let mut l = Layers::NONE;
+        f(&mut l);
+        l
+    }
+
     #[test]
     fn a_single_player_is_drawn_with_the_colour_its_legend_shows() {
-        assert_eq!(scale_position(1, 1), 1.0);
         assert_eq!(legend_ticks(1), vec![(1, 1.0)]);
+        let (game, counts, e) = parts(Game::peters(50, 3), 1);
+        let sc = scene(&game, &counts, &e);
+        let (pm, _) = render_layers(&sc, FRAMES[1], &theme::LIGHT, only(|l| l.density = true));
+        let painted: Vec<Rgb> = pm.pixels().iter().map(|p| rgb(*p)).filter(|c| *c != theme::LIGHT.surface).collect();
+        assert!(!painted.is_empty());
+        assert!(
+            painted.iter().all(|c| *c == theme::LIGHT.ramp(1.0)),
+            "one player must use the colour of the legend's only tick"
+        );
+    }
+
+    /// Every density pixel has the colour the legend gives for its player count.
+    #[test]
+    fn density_pixels_use_the_legend_colours() {
+        let (game, counts, e) = parts(Game::peters(300, 5), 20_000);
+        let sc = scene(&game, &counts, &e);
+        for (frame, th) in [(FRAMES[1], theme::LIGHT), (FRAMES[4], theme::DARK)] {
+            let (pm, lay) = render_layers(&sc, frame, &th, only(|l| l.density = true));
+            let ras = lay.raster(frame.dpr);
+            let grid = density_grid(&sc, &lay, &ras);
+            for gy in 0..ras.h {
+                for gx in 0..ras.w {
+                    let n = grid[gy * ras.w + gx];
+                    let got = rgb(pm.pixels()[(ras.oy + gy) * pm.width() as usize + ras.ox + gx]);
+                    let want = if n == 0 {
+                        th.surface
+                    } else {
+                        th.ramp((scale_position(n, e.max_cell) * 255.0).round() / 255.0)
+                    };
+                    assert_eq!(got, want, "pixel ({gx},{gy}) with {n} players");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn strip_bars_have_the_height_of_their_count() {
+        let (game, counts, e) = parts(Game { rich: 1e4, ..Game::peters(300, 3) }, 5000);
+        let sc = scene(&game, &counts, &e);
+        for frame in FRAMES {
+            let (pm, lay) = render_layers(&sc, frame, &theme::LIGHT, only(|l| l.strip = true));
+            let ras = lay.strip_raster(frame.dpr);
+            let counts = strip_counts(&sc, &lay, &ras);
+            let max = *counts.iter().max().unwrap();
+            for (c, &n) in counts.iter().enumerate() {
+                let filled = (0..ras.h)
+                    .filter(|r| {
+                        rgb(pm.pixels()[(ras.oy + r) * pm.width() as usize + ras.ox + c]) == theme::LIGHT.players[1]
+                    })
+                    .count();
+                let want = if n == 0 { 0 } else { ((n as f64 / max as f64 * ras.h as f64).round() as usize).max(1) };
+                assert_eq!(filled, want, "column {c}: {n} of max {max} in {frame:?}");
+            }
+        }
+    }
+
+    /// Rows (device, whole canvas) that hold at least one pixel different from the surface.
+    fn painted_rows(pm: &Pixmap, x0: usize, x1: usize, surface: Rgb) -> Vec<usize> {
+        let w = pm.width() as usize;
+        (0..pm.height() as usize).filter(|&y| (x0..x1).any(|x| rgb(pm.pixels()[y * w + x]) != surface)).collect()
+    }
+
+    #[test]
+    fn grid_lines_sit_on_their_decades_and_threshold_lines_on_their_thresholds() {
+        let (game, counts, e) = parts(Game::peters(300, 5), 5000);
+        let sc = scene(&game, &counts, &e);
+        let lat = game.lattice();
+        for frame in FRAMES {
+            for (layer, values) in [
+                (only(|l| l.grid = true), decades(&layout(&sc, frame)).iter().map(|d| *d as f64).collect::<Vec<_>>()),
+                (only(|l| l.thresholds = true), vec![lat.rich, lat.broke]),
+            ] {
+                let (pm, lay) = render_layers(&sc, frame, &theme::LIGHT, layer);
+                let ras = lay.raster(frame.dpr);
+                let rows = painted_rows(&pm, ras.ox, ras.ox + ras.w, theme::LIGHT.surface);
+                let at: Vec<f64> = values.iter().map(|v| f64::from(lay.y_of(*v)) * f64::from(frame.dpr)).collect();
+                for &r in &rows {
+                    assert!(
+                        at.iter().any(|y| (r as f64 + 0.5 - y).abs() <= 1.0 + f64::from(frame.dpr) / 2.0),
+                        "row {r} painted away from every line in {frame:?}"
+                    );
+                }
+                for y in &at {
+                    assert!(
+                        rows.iter().any(|&r| (r as f64 + 0.5 - y).abs() <= 1.0),
+                        "no line at device y {y} in {frame:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rich_players_are_drawn_only_above_the_line_and_each_leaves_a_mark() {
+        let game = Game::peters(1000, 2022);
+        let players = 200_000;
+        let (counts, s) = simulate(&game, players);
+        let e = ensemble(&game, players as u64, &counts);
+        let lat = game.lattice();
+        let paths: Vec<Vec<f64>> = coin_core::stats::rich_ids(&game, &s)
+            .iter()
+            .map(|&id| coin_core::sim::path(&game, id).iter().enumerate().map(|(t, &k)| lat.at(t as u32, k)).collect())
+            .collect();
+        assert!(paths.len() >= 20, "need rich players, got {}", paths.len());
+        for frame in [FRAMES[2], FRAMES[4], FRAMES[0]] {
+            let sc = Scene {
+                game: &game,
+                counts: &counts,
+                ensemble: &e,
+                highlighted: &[],
+                rich_paths: &paths,
+                rich_full: false,
+            };
+            let (pm, lay) = render_layers(&sc, frame, &theme::LIGHT, only(|l| l.rich = true));
+            let ras = lay.raster(frame.dpr);
+            let line = ras.oy as f64 + ras.dy(lay.y_of(lat.rich));
+            let rows = painted_rows(&pm, ras.ox, ras.ox + ras.w, theme::LIGHT.surface);
+            assert!(rows.iter().all(|&r| (r as f64) < line), "orange below the 1 mld line in {frame:?}");
+            for (i, p) in paths.iter().enumerate() {
+                let one = [p.clone()];
+                let sc1 = Scene { rich_paths: &one, ..sc };
+                let (pm1, _) = render_layers(&sc1, frame, &theme::LIGHT, only(|l| l.rich = true));
+                assert!(
+                    pm1.pixels().iter().any(|q| rgb(*q) != theme::LIGHT.surface),
+                    "rich player {i} leaves no pixel in {frame:?}"
+                );
+            }
+            // With full paths, orange also appears below the line.
+            let full = Scene { rich_full: true, ..sc };
+            let (pmf, _) = render_layers(&full, frame, &theme::LIGHT, only(|l| l.rich = true));
+            let rows_f = painted_rows(&pmf, ras.ox, ras.ox + ras.w, theme::LIGHT.surface);
+            assert!(rows_f.iter().any(|&r| (r as f64) > line + 2.0));
+        }
+    }
+
+    /// The median is solid, the mean dotted: sampled along each line, the median is inked almost
+    /// everywhere and the mean clearly less.
+    #[test]
+    fn line_styles_match_the_legend() {
+        let (game, counts, e) = parts(Game::peters(1000, 5), 20_000);
+        let sc = scene(&game, &counts, &e);
+        let frame = Frame { css_w: 1000.0, css_h: 600.0, dpr: 2.0 };
+        let (pm, lay) = render_layers(&sc, frame, &theme::LIGHT, only(|l| l.ensemble = true));
+        let w = pm.width() as usize;
+        let inked = |values: &[f64]| {
+            let mut hit = 0;
+            let mut total = 0;
+            let mut x = lay.x_of(300.0);
+            while x < lay.x_of(1000.0) {
+                let t = f64::from((x - lay.x) / lay.w) * 1000.0;
+                let (t0, f) = (t.floor() as usize, t.fract());
+                let v = values[t0] * (1.0 - f) + values[(t0 + 1).min(1000)] * f;
+                let (px, py) = ((x * frame.dpr) as usize, (lay.y_of(v) * frame.dpr) as usize);
+                let c = rgb(pm.pixels()[py * w + px]);
+                hit += usize::from(c.0 < 128);
+                total += 1;
+                x += 0.37;
+            }
+            hit as f64 / total as f64
+        };
+        let (median, mean) = (inked(&e.median), inked(&e.mean));
+        assert!(median > 0.9, "median line not solid: {median:.2}");
+        assert!(mean < median - 0.2, "mean line not dotted: {mean:.2} vs {median:.2}");
+    }
+
+    #[test]
+    fn layout_holds_the_band_of_every_occupied_cell() {
+        let (game, counts, e) = parts(Game::peters(1000, 9), 20_000);
+        let sc = scene(&game, &counts, &e);
+        let lat = game.lattice();
+        let lay = layout(&sc, FRAMES[2]);
+        for t in 1..=1000u32 {
+            for (k, _) in cells(&sc, t) {
+                let (lo, hi) = band(&lat, t, k);
+                assert!(lo >= lay.ymin && hi <= lay.ymax, "cell ({t},{k}) outside the y range");
+            }
+        }
     }
 
     #[test]

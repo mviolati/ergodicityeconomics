@@ -49,8 +49,12 @@ impl Game {
             return Err("thresholds must satisfy broke <= start < rich".into());
         }
         // Threshold tests are done in f64. They are exact only if no reachable wealth is within
-        // rounding error of a threshold, so reject games where one is.
+        // rounding error of a threshold, so reject games where one is. Round 0 (everyone at the
+        // start) must be clearly below the rich threshold and not below the broke one.
         let lat = self.lattice();
+        if lat.rich - lat.l0 <= 1e-9 || lat.l0 < lat.broke {
+            return Err("the start must be clearly below the rich threshold".into());
+        }
         for t in 1..=self.rounds {
             for k in 0..=t {
                 let l = lat.at(t, k);
@@ -206,5 +210,18 @@ mod tests {
         assert!(Game { broke: 60.0, ..Game::peters(10, 1) }.validate().is_err());
         // With +100% / -50% the start is reached again after 1 heads and 1 tails.
         assert!(Game { win: 2.0, lose: 0.5, ..Game::peters(10, 1) }.validate().is_err());
+        assert!(Game::peters(Game::MAX_ROUNDS, 1).validate().is_ok(), "the largest game is valid");
+        for bad in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+            assert!(Game { win: bad, ..Game::peters(10, 1) }.validate().is_err(), "win {bad}");
+            assert!(Game { lose: bad, ..Game::peters(10, 1) }.validate().is_err(), "lose {bad}");
+            assert!(Game { start: bad, ..Game::peters(10, 1) }.validate().is_err(), "start {bad}");
+            assert!(Game { rich: bad, ..Game::peters(10, 1) }.validate().is_err(), "rich {bad}");
+            assert!(Game { broke: bad, ..Game::peters(10, 1) }.validate().is_err(), "broke {bad}");
+        }
+        assert!(Game { rich: 100.0, ..Game::peters(10, 1) }.validate().is_err(), "rich == start");
+        assert!(Game { rich: 50.0, broke: 1.0, ..Game::peters(10, 1) }.validate().is_err(), "rich < start");
+        let one_ulp = f64::from_bits(100f64.to_bits() + 1);
+        assert!(Game { rich: one_ulp, ..Game::peters(10, 1) }.validate().is_err(), "rich one ulp above the start");
+        assert!(Game { broke: 100.0, ..Game::peters(10, 1) }.validate().is_ok(), "broke == start is allowed");
     }
 }

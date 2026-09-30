@@ -28,9 +28,9 @@ select, input[type="number"] {
 input[type="number"] { width: 11em; }
 button {
   font: 600 14px var(--font-body); border-radius: 6px; padding: 8px 14px; cursor: pointer;
-  border: 1px solid var(--accent); background: var(--accent); color: #ffffff;
+  border: 1px solid var(--button); background: var(--button); color: #ffffff;
 }
-button.secondary { background: transparent; color: var(--accent); }
+button.secondary { background: transparent; color: var(--accent-text); border-color: var(--accent-text); }
 button:disabled { opacity: 0.55; cursor: progress; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
@@ -125,7 +125,7 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
 
   <section class="notes">
     <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Tra due livelli occupati vicini non resta spazio vuoto, e nessuna cella attraversa una linea di soglia.</p>
-    <p><b>Le linee.</b> Le linee colorate spesse (fino a tre) sono giocatori veri di questo run, con il colore del loro ruolo. Le linee arancioni sottili sono gli altri giocatori che hanno toccato 1 miliardo €; giocatori allo stesso livello nello stesso round si sovrappongono. Per contarli c'è la striscia sotto il grafico: per ogni round, quanti giocatori sono sopra 1 miliardo € (se più round cadono nello stesso pixel, il più alto; il tooltip dà il valore di ogni round). Il crollo più profondo è misurato in proporzione (quante volte la ricchezza si divide), non in euro. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
+    <p><b>Le linee.</b> Le linee colorate spesse (fino a tre) sono giocatori veri di questo run, con il colore del loro ruolo. Le linee arancioni sottili sono gli altri giocatori che hanno toccato 1 miliardo €; giocatori allo stesso livello nello stesso round si sovrappongono. Per contarli c'è la striscia sotto il grafico: per ogni round, quanti giocatori sono sopra 1 miliardo € (se più round cadono nello stesso pixel, il più alto; il tooltip indica quali round copre il pixel, il loro minimo e il loro massimo). Il crollo più profondo è misurato in proporzione (quante volte la ricchezza si divide), non in euro. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
     <p><b>Riproducibile.</b> La moneta del giocatore <i>i</i> al round <i>t</i> è un bit di Philox4x32-10 con chiave il seed. Stesso seed, stessi giocatori, su ogni dispositivo e con qualsiasi numero di thread.</p>
     <p><b>Motore.</b> Simulazione, testi e pixel del grafico sono calcolati in Rust compilato in WebAssembly, divisi tra i core del dispositivo. Il JavaScript della pagina sposta solo i dati e li mette sullo schermo.</p>
   </section>
@@ -174,7 +174,7 @@ const ask = (w, msg) => new Promise((ok, fail) => {
 const resetPool = () => { pool.forEach(w => w.terminate()); pool = []; };
 const read = (x, len) => decoder.decode(new Uint8Array(x.memory.buffer, x.out_ptr(), len));
 
-let wasm = null, ready = false, busy = false, simText = "", richTexts = null;
+let wasm = null, ready = false, busy = false, hasRun = false, simText = "", richTexts = null;
 const controls = () => [$("play"), $("reseed"), $("players"), $("rounds"), $("seed")];
 const results = () => [$("tiles"), $("plot"), $("legend"), $("timing"), $("table")];
 
@@ -191,11 +191,10 @@ async function play() {
   const seedLo = seed % 4294967296, seedHi = Math.floor(seed / 4294967296);
   $("status").hidden = false;
   $("status").textContent = "Simulazione in corso…";
-  let ok = false;
+  let replaced = false, error = null;
   try {
     const m = await mod;
     wasm = (await main).exports;
-    if (wasm.run_begin(P, R, seedLo, seedHi) !== 0) throw new Error("parametri fuori intervallo");
     const threads = Math.max(1, Math.min(8, navigator.hardwareConcurrency || 4));
     const blocks = Math.ceil(P / 64), per = Math.ceil(blocks / threads) * 64, jobs = [];
     job += 1;
@@ -203,9 +202,11 @@ async function play() {
       jobs.push(ask(worker(w), { job, mod: m, rounds: R, seedLo, seedHi, firstBlock: w * per / 64, n: Math.min(per, P - w * per) }));
     }
     const parts = await Promise.all(jobs);
-    const simMs = Math.max(...parts.map(p => p.ms));
+    if (parts.some(p => p.rc !== 0)) throw new Error("simulazione rifiutata");
+    // All chunks are here: only now replace the previous run inside the module.
+    if (wasm.run_begin(P, R, seedLo, seedHi) !== 0) throw new Error("parametri fuori intervallo");
+    replaced = true;
     parts.forEach((part, w) => {
-      if (part.rc !== 0) throw new Error("simulazione rifiutata");
       const first = w * per, n = part.fields.length / FIELDS;
       new Uint32Array(wasm.memory.buffer, wasm.run_slot(0, 0), part.counts.length).set(part.counts);
       wasm.run_add_scratch();
@@ -213,24 +214,38 @@ async function play() {
         new Uint32Array(wasm.memory.buffer, wasm.run_slot(f + 1, first), n).set(part.fields.subarray(f * n, (f + 1) * n));
       }
     });
-    if (wasm.run_finish(simMs, parts.length) !== 0) throw new Error("risultati incompleti");
+    if (wasm.run_finish(Math.max(...parts.map(p => p.ms)), parts.length) !== 0) throw new Error("risultati incompleti");
     show(JSON.parse(read(wasm, wasm.view())));
-    ok = true;
   } catch (err) {
+    error = err;
     resetPool();
-    $("status").hidden = false;
-    $("status").textContent = `Non è stato possibile simulare: ${err.message}. I dati attenuati sono del run precedente. Riprova.`;
   } finally {
     busy = false;
     controls().forEach(c => { c.disabled = false; });
     if (focused && controls().includes(focused)) focused.focus();
   }
-  if (ok) {
-    ready = true;
+  if (!error) {
+    hasRun = true; ready = true;
     results().forEach(e => e.classList.remove("stale"));
     draw();
     $("status").hidden = true;
+    return;
   }
+  // The previous run is still intact unless the failure came after it was replaced; then clear
+  // everything that described it.
+  if (replaced) {
+    hasRun = false;
+    $("tiles").replaceChildren(); $("legend").replaceChildren(); $("table").replaceChildren();
+    $("timing").textContent = "";
+    const c = $("plot"); c.getContext("2d").clearRect(0, 0, c.width, c.height);
+  }
+  ready = hasRun;
+  if (ready) draw();
+  if (!hasRun) results().forEach(e => e.classList.remove("stale"));
+  $("status").hidden = false;
+  $("status").textContent = hasRun
+    ? `Non è stato possibile simulare: ${error.message}. I dati attenuati sono del run precedente. Riprova.`
+    : `Non è stato possibile simulare: ${error.message}. Riprova.`;
 }
 
 function el(tag, cls, text) {
@@ -264,11 +279,12 @@ function show(v) {
     lines.append(s);
   });
   richTexts = v.rich;
+  const thin = v.rich.toggle !== ""; // there are thin orange lines to show
   const rich = el("div", "item"), rs = el("span");
-  if (v.rich.count > 0) rs.append(swatch("thin", "var(--p2)"));
+  if (thin) rs.append(swatch("thin", "var(--p2)"));
   rs.append(el("span", null, "")); rs.lastChild.id = "richnote";
   rich.append(rs);
-  if (v.rich.count > 0) {
+  if (thin) {
     const lab = el("label"), box = document.createElement("input");
     box.type = "checkbox"; box.id = "richfull"; box.checked = !!window.__richFull;
     box.addEventListener("change", () => { window.__richFull = box.checked; richNote(); draw(); });
@@ -295,7 +311,7 @@ function show(v) {
 
 function richNote() {
   const n = $("richnote");
-  if (n && richTexts) n.textContent = window.__richFull && richTexts.count > 0 ? richTexts.noteFull : richTexts.note;
+  if (n && richTexts) n.textContent = window.__richFull && richTexts.toggle !== "" ? richTexts.noteFull : richTexts.note;
 }
 
 // Hide scale labels that would overlap a neighbour (the first and the last always stay).
@@ -323,7 +339,8 @@ function draw() {
   const cssH = Math.round(Math.min(640, Math.max(380, cssW * 0.62)));
   const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
   const t0 = performance.now();
-  const ptr = wasm.render(cssW, cssH, dpr, isDark() ? 1 : 0, window.__richFull ? 1 : 0);
+  const full = window.__richFull && richTexts && richTexts.toggle !== "";
+  const ptr = wasm.render(cssW, cssH, dpr, isDark() ? 1 : 0, full ? 1 : 0);
   if (!ptr) return;
   const w = wasm.render_width(), h = wasm.render_height();
   canvas.width = w; canvas.height = h;
@@ -361,6 +378,7 @@ function hover(ev) {
     return d;
   };
   const rows = [el("div", "head", h.head), ...h.players.map(p => row(p.label, p.value, p.slot)), ...h.rows.map(q => row(q.label, q.value))];
+  if (h.range) rows.push(row(h.range.label, h.range.value));
   if (h.cell) rows.push(row(h.cell.label, h.cell.value));
   tip.replaceChildren(...rows);
   tip.hidden = false;
@@ -393,6 +411,15 @@ new ResizeObserver(() => {
   resizeTimer = setTimeout(() => { draw(); thinTicks(); }, 80);
 }).observe($("chart"));
 new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+// Redraw when the device pixel ratio changes (zoom, another monitor) at the same CSS width.
+let dprQuery = null;
+const onDpr = () => { watchDpr(); draw(); };
+function watchDpr() {
+  if (dprQuery) dprQuery.removeEventListener("change", onDpr);
+  dprQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  dprQuery.addEventListener("change", onDpr);
+}
+watchDpr();
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
 // Text fonts load in the background; the chart does not need them (its font is in the module).
 const fonts = document.createElement("link");

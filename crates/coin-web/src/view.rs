@@ -111,9 +111,9 @@ pub fn player_text(game: &Game, s: &Summary, p: &Pick) -> (String, String) {
         Role::RichThenLowest => format!("Tra chi ha toccato {rich}, il più in basso alla fine{tie}"),
         Role::BiggestFall => format!("Il crollo più profondo, in proporzione{tie}"),
         Role::FirstBroke if p.ties > 0 => format!(
-            "Tra i primi a scendere sotto {broke}: al round {}, insieme ad {}",
+            "Tra i primi a scendere sotto {broke}: al round {}, insieme {}",
             int(u64::from(broke_t)),
-            altri(p.ties)
+            if p.ties == 1 { "a un altro giocatore".to_string() } else { format!("ad {}", altri(p.ties)) }
         ),
         Role::FirstBroke => format!("Il primo a scendere sotto {broke}: al round {}", int(u64::from(broke_t))),
     };
@@ -241,6 +241,13 @@ pub fn rich_texts(game: &Game, rich_ever: u64, thin: u64, shown: u64) -> (String
     (clipped, full, toggle)
 }
 
+/// "1.000.000 lanci di moneta · simulazione 38 ms (calcolo in 4 thread)".
+pub fn timing(tosses: u64, sim_ms: f64, threads: u32) -> String {
+    let lanci = if tosses == 1 { "1 lancio di moneta".to_string() } else { format!("{} lanci di moneta", int(tosses)) };
+    let ms = if sim_ms < 1.0 { "meno di 1 ms".to_string() } else { format!("{} ms", int(sim_ms.round() as u64)) };
+    format!("{lanci} · simulazione {ms} (calcolo in {threads} thread)")
+}
+
 /// The whole page text for one finished run.
 #[allow(clippy::too_many_arguments)]
 pub fn view_json(
@@ -351,12 +358,7 @@ pub fn view_json(
         eur(e.expected[game.rounds as usize])
     ));
     j.raw(",");
-    j.key("timing").str(&format!(
-        "{} lanci di moneta · simulazione {} ms (calcolo nei {} thread)",
-        int(p * u64::from(game.rounds)),
-        int(sim_ms.round().max(0.0) as u64),
-        threads
-    ));
+    j.key("timing").str(&timing(p * u64::from(game.rounds), sim_ms, threads));
     j.raw("}");
     j.finish()
 }
@@ -406,7 +408,21 @@ pub fn hover_json(
         }
         j.raw("{").key("label").str(l).raw(",").key("value").str(v).raw("}");
     }
-    j.raw("],").key("cell");
+    j.raw("],").key("range");
+    match p.strip_range {
+        Some((lo, hi)) if p.shared.0 != p.shared.1 => {
+            let v = if lo == hi { int(lo) } else { format!("da {} a {}", int(lo), int(hi)) };
+            j.raw("{")
+                .key("label")
+                .str(&format!("Sopra {rich} nei round {}–{}", int(u64::from(p.shared.0)), int(u64::from(p.shared.1))))
+                .raw(",");
+            j.key("value").str(&v).raw("}");
+        }
+        _ => {
+            j.raw("null");
+        }
+    }
+    j.raw(",").key("cell");
     match p.cell {
         Some((l, n)) => {
             j.raw("{").key("label").str(&format!("Giocatori a {} in questo round", eur(l))).raw(",");
@@ -480,6 +496,15 @@ mod tests {
     }
 
     #[test]
+    fn timing_texts_are_exact() {
+        assert_eq!(timing(1, 0.2, 1), "1 lancio di moneta · simulazione meno di 1 ms (calcolo in 1 thread)");
+        assert_eq!(
+            timing(1_000_000_000, 2189.4, 4),
+            "1.000.000.000 lanci di moneta · simulazione 2.189 ms (calcolo in 4 thread)"
+        );
+    }
+
+    #[test]
     fn orange_line_texts_are_exact() {
         let g = Game::peters(1000, 1);
         assert_eq!(rich_texts(&g, 0, 0, 0).0, "Nessun giocatore ha toccato 1 miliardo €.");
@@ -522,6 +547,8 @@ mod tests {
         let (n, d) = player_text(&g, &s, &Pick { id: 0, role: Role::BiggestFall, ties: 0 });
         assert_eq!(n, "Il crollo più profondo, in proporzione");
         assert_eq!(d, "#0 · da 196 € al round 22 a 2,1 × 10⁻⁶¹ € al round 1.000: ricchezza divisa per 9,2 × 10⁶² · fine 2,1 × 10⁻⁶¹ € · prima volta sotto 1 € al round 540");
+        let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::FirstBroke, ties: 1 });
+        assert_eq!(n, "Tra i primi a scendere sotto 1 €: al round 540, insieme a un altro giocatore");
         let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::FirstBroke, ties: 957 });
         assert_eq!(n, "Tra i primi a scendere sotto 1 €: al round 540, insieme ad altri 957 giocatori");
         let (n, _) = player_text(&g, &s, &Pick { id: 0, role: Role::FirstBroke, ties: 0 });
@@ -546,7 +573,7 @@ mod tests {
                     let (name, detail) = player_text(&game, &s, p);
                     let i = p.id as usize;
                     assert!(detail.starts_with(&format!("#{} ·", int(p.id))));
-                    assert_eq!(name.contains("a pari merito") || name.contains("insieme ad"), p.ties > 0, "{name}");
+                    assert_eq!(name.contains("a pari merito") || name.contains("insieme a"), p.ties > 0, "{name}");
                     if p.role == Role::BiggestFall {
                         let from = eur(lat.at(s.get(FALL_FROM_T, i), s.get(FALL_FROM_K, i)));
                         assert!(detail.contains(&format!("da {from}")), "{detail}");

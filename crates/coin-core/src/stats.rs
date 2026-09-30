@@ -105,7 +105,8 @@ impl Role {
 pub struct Pick {
     pub id: u64,
     pub role: Role,
-    /// Other players with exactly the same score for this role (the lowest id is shown).
+    /// Other players with exactly the same score for this role. The one shown is the lowest id
+    /// that no earlier role already shows.
     pub ties: u64,
 }
 

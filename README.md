@@ -22,8 +22,8 @@ them are above 1 billion € in the same round (strip under the chart). 243 of t
 | Mark | Meaning |
 |---|---|
 | Grey background | Number of players in each cell (round × wealth level). A cell that stands out more from the background holds more players. The scale is logarithmic; the page shows it with numbers. If more than one round or level falls on one pixel, the pixel shows the fullest cell. Between two neighbouring occupied levels there is no gap, and no cell crosses a threshold line. |
-| Orange strip under the chart | The number of players with at least 1 billion € in each round. If more than one round falls on one pixel column, the bar shows the highest of them; the tooltip gives the value of each round. |
-| Thin orange lines | The other players who reached 1 billion € (the thick lines are not drawn twice), by default only while they are above it. Players on the same level in the same round have the same wealth, so their lines coincide: count with the strip, not with the lines. An option on the page shows their full paths. |
+| Orange strip under the chart | The number of players with at least 1 billion € in each round. If more than one round falls on one pixel column, the bar shows the highest of them, and the tooltip names those rounds with their smallest and largest value; the table and a wider screen give single rounds. |
+| Thin orange lines | The other players who reached 1 billion € (the thick lines are not drawn twice), by default only while they are above it; a player who crossed by less than a pixel still gets one pixel per round above the line. Players on the same level in the same round have the same wealth, so their lines coincide: count with the strip, not with the lines. An option on the page shows their full paths. |
 | Thick coloured lines | Up to three real players of the run, coloured by role. Blue: the richest at the end. Orange: among the players who reached 1 billion €, the one who ended lowest (if nobody reached it: the deepest crash in proportion, i.e. the largest division of wealth from a previous peak, not the largest loss in euros). Green: the first player below 1 €. Each role is decided over all players; ties are stated. |
 | Solid / dotted / dashed line | Median player (rank ⌈P/2⌉ from the poorest) / mean of all players / expected value. |
 
@@ -72,7 +72,8 @@ rustup target add wasm32-unknown-unknown
 To open the page, serve `dist/` with any static server, for example `python3 -m http.server -d dist`.
 The page loads its text fonts from Google Fonts when it can, and otherwise uses the system fonts. The
 chart does not depend on them: its font is inside the WebAssembly module. The page lists the licences of
-all third-party code it contains.
+the crates, of the font and of the Rust standard library that it contains (`cargo xtask web` builds the
+module with `CARGO_ENCODED_RUSTFLAGS`, so paths with spaces work).
 
 ## Verification
 
@@ -93,8 +94,15 @@ The tests check:
    isolated cells are not enlarged; the frame does not cover data; the strip reaches the true maximum; the
    tooltip reports exactly the cell the pixel shows.
 7. Every player role and its tie count are true (150 games); the median rank, the first round of the
-   maximum and every check of `Game::validate` are pinned; the page texts are compared as exact strings
-   (singular and plural); JSON escaping.
+   maximum and each check of `Game::validate` (bounds of rounds, non-finite and non-positive values, order
+   and separation of the thresholds, reachable wealth on a threshold) have a test; the page texts are
+   compared as exact strings (singular and plural); JSON escaping.
+8. Rendered pixels: every density pixel has the legend colour of its count; strip bars have the height of
+   their count; grid lines sit on their decades and threshold lines on their thresholds; in the default view
+   no orange pixel lies below the 1 billion € line and every rich player leaves at least one pixel; the
+   median is solid and the mean dotted. Seven deliberate faults in the renderer (wrong colours, half bars,
+   unclipped lines, shifted grid, shifted thresholds, swapped styles, y range without the cells) each make a
+   test fail.
 
 ## Speed
 

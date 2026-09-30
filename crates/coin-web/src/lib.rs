@@ -280,6 +280,8 @@ pub struct Probe {
     pub round: u32,
     pub shared: (u32, u32),
     pub cell: Option<(f64, u32)>,
+    /// In the strip: the smallest and largest number of rich players among the rounds of the pixel.
+    pub strip_range: Option<(u64, u64)>,
 }
 
 /// Applies the density's own ownership rules to the pixel under (x, y). In the main plot the
@@ -314,7 +316,7 @@ pub fn probe(scene: &Scene<'_>, lay: &Layout, ras: &Raster, x: f32, y: f32) -> O
         }
         let round =
             best.map_or_else(|| *owners.iter().min_by(|a, b| near(**a).total_cmp(&near(**b))).unwrap(), |b| b.0);
-        return Some(Probe { round, shared: (first, last), cell: best.map(|b| (b.1, b.2)) });
+        return Some(Probe { round, shared: (first, last), cell: best.map(|b| (b.1, b.2)), strip_range: None });
     }
     if lay.in_strip(x, y) {
         let rich = &scene.ensemble.rich_now;
@@ -322,7 +324,9 @@ pub fn probe(scene: &Scene<'_>, lay: &Layout, ras: &Raster, x: f32, y: f32) -> O
             .iter()
             .max_by(|a, b| rich[**a as usize].cmp(&rich[**b as usize]).then(near(**b).total_cmp(&near(**a))))
             .unwrap();
-        return Some(Probe { round, shared: (first, last), cell: None });
+        let lo = owners.iter().map(|&t| rich[t as usize]).min().unwrap_or(0);
+        let hi = owners.iter().map(|&t| rich[t as usize]).max().unwrap_or(0);
+        return Some(Probe { round, shared: (first, last), cell: None, strip_range: Some((lo, hi)) });
     }
     None
 }
@@ -433,6 +437,22 @@ mod tests {
                         let p = probe(&scene, &lay, &ras, x, y).expect("inside");
                         let shown = grid[row * ras.w + c];
                         assert_eq!(p.cell.map_or(0, |c| c.1), shown, "pixel ({c},{row}) at {w}x{h}@{dpr}");
+                        if let Some((level, n)) = p.cell {
+                            // The level named in the tooltip is a cell of the reported round that
+                            // owns this pixel and holds that many players.
+                            let lat = run.game.lattice();
+                            let k = ((level - lat.base(p.round)) / lat.gap).round() as u32;
+                            assert_eq!(lat.at(p.round, k), level);
+                            assert!(columns_of_round(&lay, &ras, p.round).contains(&c));
+                            assert!(rows_of_cell(&lay, &ras, &lat, p.round, k).contains(&row));
+                            let width = run.game.rounds as usize + 1;
+                            let count = if p.round == 0 {
+                                d.ensemble.players as u32
+                            } else {
+                                run.counts[(p.round as usize - 1) * width + k as usize]
+                            };
+                            assert_eq!(count, n);
+                        }
                         checked += 1;
                     }
                 }
