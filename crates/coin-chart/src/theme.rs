@@ -45,7 +45,7 @@ pub const LIGHT: Theme = Theme {
     rule: Rgb(0xe3, 0xe4, 0xe6),
     accent: Rgb(0x2a, 0x78, 0xd6),
     players: [Rgb(0x2a, 0x78, 0xd6), Rgb(0xeb, 0x68, 0x34), Rgb(0x1b, 0xaf, 0x7a)],
-    dens_lo: Rgb(0xe4, 0xe3, 0xdf),
+    dens_lo: Rgb(0xd0, 0xce, 0xc8),
     dens_hi: Rgb(0x33, 0x32, 0x2f),
 };
 
@@ -59,7 +59,7 @@ pub const DARK: Theme = Theme {
     rule: Rgb(0x2c, 0x2e, 0x33),
     accent: Rgb(0x39, 0x87, 0xe5),
     players: [Rgb(0x39, 0x87, 0xe5), Rgb(0xd9, 0x59, 0x26), Rgb(0x19, 0x9e, 0x70)],
-    dens_lo: Rgb(0x30, 0x31, 0x36),
+    dens_lo: Rgb(0x3e, 0x3f, 0x45),
     dens_hi: Rgb(0xe0, 0xdf, 0xda),
 };
 
@@ -165,7 +165,8 @@ mod tests {
         for t in [LIGHT, DARK] {
             let (a, b) = (luminance(t.dens_lo), luminance(t.surface));
             let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
-            assert!(contrast >= 1.2, "lowest density step too close to the surface: {contrast:.2}");
+            // One player (an outlier) must be clearly visible.
+            assert!(contrast >= 1.5, "lowest density step too close to the surface: {contrast:.2}");
         }
     }
 }

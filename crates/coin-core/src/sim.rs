@@ -2,70 +2,94 @@
 //!
 //! Players are processed in blocks of 64: one Philox call gives the 64 coins of a block at one
 //! round. Per player we keep only integers on the lattice (see [`crate::Lattice`]): final heads,
-//! the round and heads of the peak, the first round below the broke threshold. The full path
-//! of any player can be re-created with [`path`].
+//! the peak, the first round below the broke threshold and the largest fall, each as
+//! (round, heads). The full path of any player can be re-created with [`path`].
 
 use crate::{rng::coins, Game};
 
 /// Players per Philox call. Ranges handed to [`simulate_range`] start at a multiple of this.
 pub const BLOCK: u64 = 64;
 
-/// Per-player results, one entry per player (struct of arrays).
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Number of per-player fields in a [`Summary`].
+pub const FIELDS: usize = 8;
+/// Field index: heads after the last round.
+pub const FINAL_K: usize = 0;
+/// Field index: round of the highest wealth over rounds 0..=R (first one; 0 = never above start).
+pub const PEAK_T: usize = 1;
+/// Field index: heads at `PEAK_T`.
+pub const PEAK_K: usize = 2;
+/// Field index: first round with wealth below the broke threshold; 0 = never.
+pub const BROKE_T: usize = 3;
+/// Field index: round where the largest fall from a previous peak starts (that peak).
+pub const FALL_FROM_T: usize = 4;
+/// Field index: heads at `FALL_FROM_T`.
+pub const FALL_FROM_K: usize = 5;
+/// Field index: round where the largest fall ends (its lowest point). Equal to `FALL_FROM_T`
+/// if the player never fell below a previous peak.
+pub const FALL_TO_T: usize = 6;
+/// Field index: heads at `FALL_TO_T`.
+pub const FALL_TO_K: usize = 7;
+
+/// Per-player results: [`FIELDS`] integer arrays, one entry per player (see the field indices).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
-    /// Heads after the last round.
-    pub final_k: Vec<u32>,
-    /// Round of the highest wealth over rounds 0..=R (first one if tied; 0 = never above start).
-    pub peak_t: Vec<u32>,
-    /// Heads at `peak_t`.
-    pub peak_k: Vec<u32>,
-    /// First round with wealth below the broke threshold; 0 = never.
-    pub broke_t: Vec<u32>,
-    /// Largest fall from a previous peak, in log10 units (decades).
-    pub drawdown: Vec<f64>,
+    pub fields: [Vec<u32>; FIELDS],
 }
 
 impl Summary {
     /// A summary for `n` players, all zero.
     pub fn zeros(n: usize) -> Self {
-        Summary {
-            final_k: vec![0; n],
-            peak_t: vec![0; n],
-            peak_k: vec![0; n],
-            broke_t: vec![0; n],
-            drawdown: vec![0.0; n],
-        }
+        Summary { fields: std::array::from_fn(|_| vec![0; n]) }
     }
 
     /// Number of players.
     pub fn len(&self) -> usize {
-        self.final_k.len()
+        self.fields[0].len()
     }
 
     /// True if there are no players.
     pub fn is_empty(&self) -> bool {
-        self.final_k.is_empty()
+        self.fields[0].is_empty()
+    }
+
+    /// Field `f` of player `i`.
+    #[inline]
+    pub fn get(&self, f: usize, i: usize) -> u32 {
+        self.fields[f][i]
     }
 
     /// Mutable view of players `range`.
     pub fn slice_mut(&mut self, range: std::ops::Range<usize>) -> SummaryMut<'_> {
-        SummaryMut {
-            final_k: &mut self.final_k[range.clone()],
-            peak_t: &mut self.peak_t[range.clone()],
-            peak_k: &mut self.peak_k[range.clone()],
-            broke_t: &mut self.broke_t[range.clone()],
-            drawdown: &mut self.drawdown[range],
-        }
+        let mut it = self.fields.iter_mut();
+        SummaryMut(std::array::from_fn(|_| &mut it.next().expect("FIELDS arrays")[range.clone()]))
     }
 }
 
 /// Mutable view of a contiguous range of players in a [`Summary`].
-pub struct SummaryMut<'a> {
-    pub final_k: &'a mut [u32],
-    pub peak_t: &'a mut [u32],
-    pub peak_k: &'a mut [u32],
-    pub broke_t: &'a mut [u32],
-    pub drawdown: &'a mut [f64],
+pub struct SummaryMut<'a>(pub [&'a mut [u32]; FIELDS]);
+
+impl<'a> SummaryMut<'a> {
+    /// Number of players in the view.
+    pub fn len(&self) -> usize {
+        self.0[0].len()
+    }
+
+    /// True if the view is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0[0].is_empty()
+    }
+
+    /// Splits into the first `n` players and the rest.
+    pub fn split_at(self, n: usize) -> (SummaryMut<'a>, SummaryMut<'a>) {
+        let mut heads: [&'a mut [u32]; FIELDS] = Default::default();
+        let mut tails: [&'a mut [u32]; FIELDS] = Default::default();
+        for (f, s) in self.0.into_iter().enumerate() {
+            let (a, b) = s.split_at_mut(n);
+            heads[f] = a;
+            tails[f] = b;
+        }
+        (SummaryMut(heads), SummaryMut(tails))
+    }
 }
 
 /// Cells of the density matrix: `counts[(t - 1) * (R + 1) + k]` = players with `k` heads after
@@ -81,33 +105,32 @@ pub fn simulate_range(game: &Game, first: u64, counts: &mut [u32], out: SummaryM
     let rounds = game.rounds;
     let width = rounds as usize + 1;
     assert_eq!(counts.len(), density_len(rounds), "density matrix has the wrong size");
-    let n = out.final_k.len();
-    assert!(
-        out.peak_t.len() == n && out.peak_k.len() == n && out.broke_t.len() == n && out.drawdown.len() == n,
-        "summary slices have different lengths"
-    );
+    let n = out.len();
+    assert!(out.0.iter().all(|f| f.len() == n), "summary slices have different lengths");
     let lat = game.lattice();
+    let out = out.0;
 
+    const B: usize = BLOCK as usize;
     let mut done = 0usize;
     let mut block = first / BLOCK;
     while done < n {
-        let m = (n - done).min(BLOCK as usize);
-        let mut k = [0u32; BLOCK as usize];
-        let mut peak = [lat.l0; BLOCK as usize];
-        let mut peak_t = [0u32; BLOCK as usize];
-        let mut peak_k = [0u32; BLOCK as usize];
-        let mut drawdown = [0f64; BLOCK as usize];
-        let mut broke_t = [0u32; BLOCK as usize];
+        let m = (n - done).min(B);
+        let mut k = [0u32; B];
+        let mut peak = [lat.l0; B];
+        let mut peak_at = [(0u32, 0u32); B];
+        let mut fall = [0f64; B];
+        let mut fall_at = [(0u32, 0u32, 0u32, 0u32); B];
+        let mut broke_t = [0u32; B];
         for t in 1..=rounds {
             let bits = coins(game.seed, block, t);
             let base = lat.base(t);
             let row = &mut counts[(t as usize - 1) * width..t as usize * width];
             let lanes = k[..m]
                 .iter_mut()
-                .zip(peak[..m].iter_mut())
-                .zip(peak_t[..m].iter_mut().zip(peak_k[..m].iter_mut()))
-                .zip(drawdown[..m].iter_mut().zip(broke_t[..m].iter_mut()));
-            for (j, (((kj, pk), (pt, pkk)), (dd, bt))) in lanes.enumerate() {
+                .zip(peak[..m].iter_mut().zip(peak_at[..m].iter_mut()))
+                .zip(fall[..m].iter_mut().zip(fall_at[..m].iter_mut()))
+                .zip(broke_t[..m].iter_mut());
+            for (j, (((kj, (pk, pa)), (fl, fa)), bt)) in lanes.enumerate() {
                 *kj += ((bits >> j) & 1) as u32;
                 // SAFETY: *kj <= t <= rounds and the row has rounds + 1 cells.
                 unsafe { *row.get_unchecked_mut(*kj as usize) += 1 };
@@ -115,19 +138,31 @@ pub fn simulate_range(game: &Game, first: u64, counts: &mut [u32], out: SummaryM
                 // Selects, not branches: the coin is unpredictable, a branch would mispredict.
                 let up = l > *pk;
                 *pk = if up { l } else { *pk };
-                *pt = if up { t } else { *pt };
-                *pkk = if up { *kj } else { *pkk };
-                *dd = dd.max(*pk - l);
+                *pa = if up { (t, *kj) } else { *pa };
+                // The fall from the current peak, from its (rounds, heads) only: the same fall
+                // always gives the same number, so "largest" and "equal" are exact.
+                let f = lat.fall(t - pa.0, *kj - pa.1);
+                let deeper = f > *fl;
+                *fl = if deeper { f } else { *fl };
+                *fa = if deeper { (pa.0, pa.1, t, *kj) } else { *fa };
                 *bt = if *bt == 0 && l < lat.broke { t } else { *bt };
             }
         }
         for j in 0..m {
             let i = done + j;
-            out.final_k[i] = k[j];
-            out.peak_t[i] = peak_t[j];
-            out.peak_k[i] = peak_k[j];
-            out.broke_t[i] = broke_t[j];
-            out.drawdown[i] = drawdown[j];
+            let (ft, fk, tt, tk) = fall_at[j];
+            for (f, v) in [
+                (FINAL_K, k[j]),
+                (PEAK_T, peak_at[j].0),
+                (PEAK_K, peak_at[j].1),
+                (BROKE_T, broke_t[j]),
+                (FALL_FROM_T, ft),
+                (FALL_FROM_K, fk),
+                (FALL_TO_T, tt),
+                (FALL_TO_K, tk),
+            ] {
+                out[f][i] = v;
+            }
         }
         done += m;
         block += 1;
@@ -156,7 +191,7 @@ pub fn simulate_parallel(game: &Game, players: usize, threads: usize) -> (Vec<u3
         let mut first = 0usize;
         while first < players {
             let n = per.min(players - first);
-            let (head, tail) = split(rest, n);
+            let (head, tail) = rest.split_at(n);
             rest = tail;
             let start = first as u64;
             handles.push(scope.spawn(move || {
@@ -173,19 +208,6 @@ pub fn simulate_parallel(game: &Game, players: usize, threads: usize) -> (Vec<u3
         }
     });
     (counts, summary)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn split(s: SummaryMut<'_>, n: usize) -> (SummaryMut<'_>, SummaryMut<'_>) {
-    let (a0, b0) = s.final_k.split_at_mut(n);
-    let (a1, b1) = s.peak_t.split_at_mut(n);
-    let (a2, b2) = s.peak_k.split_at_mut(n);
-    let (a3, b3) = s.broke_t.split_at_mut(n);
-    let (a4, b4) = s.drawdown.split_at_mut(n);
-    (
-        SummaryMut { final_k: a0, peak_t: a1, peak_k: a2, broke_t: a3, drawdown: a4 },
-        SummaryMut { final_k: b0, peak_t: b1, peak_k: b2, broke_t: b3, drawdown: b4 },
-    )
 }
 
 /// Heads of player `id` after each round: `out[t]` for t in 0..=R (`out[0] = 0`).
@@ -205,37 +227,67 @@ pub fn path(game: &Game, id: u64) -> Vec<u32> {
 mod tests {
     use super::*;
 
-    fn brute_force(game: &Game, players: usize) -> (Vec<u32>, Summary) {
+    /// The definitions, player by player, from the re-created path.
+    pub(crate) fn brute_force(game: &Game, players: usize) -> (Vec<u32>, Summary) {
         let lat = game.lattice();
         let width = game.rounds as usize + 1;
         let mut counts = vec![0u32; density_len(game.rounds)];
         let mut s = Summary::zeros(players);
         for i in 0..players {
             let p = path(game, i as u64);
-            let (mut best, mut bt, mut bk, mut dd, mut broke) = (lat.at(0, 0), 0, 0, 0f64, 0);
+            let (mut best, mut peak_at, mut broke) = (lat.at(0, 0), (0, 0), 0);
+            let (mut fall, mut fall_at) = (0f64, (0, 0, 0, 0));
             for t in 1..=game.rounds {
                 let k = p[t as usize];
                 counts[(t as usize - 1) * width + k as usize] += 1;
                 let l = lat.at(t, k);
                 if l > best {
-                    (best, bt, bk) = (l, t, k);
+                    (best, peak_at) = (l, (t, k));
                 }
-                dd = dd.max(best - l);
+                let f = lat.fall(t - peak_at.0, k - peak_at.1);
+                if f > fall {
+                    (fall, fall_at) = (f, (peak_at.0, peak_at.1, t, k));
+                }
                 if broke == 0 && l < lat.broke {
                     broke = t;
                 }
             }
-            s.final_k[i] = p[game.rounds as usize];
-            (s.peak_t[i], s.peak_k[i], s.broke_t[i], s.drawdown[i]) = (bt, bk, broke, dd);
+            let v = [p[game.rounds as usize], peak_at.0, peak_at.1, broke, fall_at.0, fall_at.1, fall_at.2, fall_at.3];
+            for (f, x) in v.into_iter().enumerate() {
+                s.fields[f][i] = x;
+            }
         }
         (counts, s)
     }
 
     #[test]
     fn fast_simulation_equals_brute_force_from_paths() {
-        for (rounds, players) in [(1, 5), (37, 130), (400, 1001)] {
+        for (rounds, players) in [(1, 5), (2, 70), (37, 130), (400, 1001)] {
             let game = Game::peters(rounds, 99);
             assert_eq!(simulate(&game, players), brute_force(&game, players), "rounds {rounds}");
+        }
+    }
+
+    #[test]
+    fn largest_fall_is_the_largest_drop_from_a_previous_peak() {
+        let game = Game::peters(300, 5);
+        let lat = game.lattice();
+        let (_, s) = simulate(&game, 500);
+        for i in 0..500 {
+            let p = path(&game, i as u64);
+            let ls: Vec<f64> = (0..=300u32).map(|t| lat.at(t, p[t as usize])).collect();
+            let mut worst = 0f64;
+            for b in 0..ls.len() {
+                for a in 0..b {
+                    worst = worst.max(ls[a] - ls[b]);
+                }
+            }
+            let (ft, fk, tt, tk) =
+                (s.get(FALL_FROM_T, i), s.get(FALL_FROM_K, i), s.get(FALL_TO_T, i), s.get(FALL_TO_K, i));
+            let got = lat.at(ft, fk) - lat.at(tt, tk);
+            assert!((got - worst).abs() < 1e-9, "player {i}: {got} vs {worst}");
+            assert_eq!(p[ft as usize], fk);
+            assert_eq!(p[tt as usize], tk);
         }
     }
 
@@ -253,9 +305,9 @@ mod tests {
         let game = Game::peters(200, 3);
         let (_, small) = simulate(&game, 500);
         let (_, big) = simulate(&game, 2000);
-        assert_eq!(small.final_k[..], big.final_k[..500]);
-        assert_eq!(small.peak_t[..], big.peak_t[..500]);
-        assert_eq!(small.broke_t[..], big.broke_t[..500]);
+        for f in 0..FIELDS {
+            assert_eq!(small.fields[f][..], big.fields[f][..500], "field {f}");
+        }
     }
 
     #[test]
@@ -263,7 +315,7 @@ mod tests {
         let (_, a) = simulate(&Game::peters(100, 1), 256);
         let (_, b) = simulate(&Game::peters(100, 2), 256);
         let (_, c) = simulate(&Game::peters(100, 1 << 40), 256);
-        assert_ne!(a.final_k, b.final_k);
-        assert_ne!(a.final_k, c.final_k, "the high 32 bits of the seed are used");
+        assert_ne!(a.fields[FINAL_K], b.fields[FINAL_K]);
+        assert_ne!(a.fields[FINAL_K], c.fields[FINAL_K], "the high 32 bits of the seed are used");
     }
 }

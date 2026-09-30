@@ -40,8 +40,7 @@ fn png(args: &[String]) {
     let (counts, s) = simulate_parallel(&game, players, threads());
     let e = ensemble(&game, players as u64, &counts);
     let st = stats(&game, &s, &e);
-    let hl: Vec<(Vec<f64>, usize)> =
-        picks(&game, &s).iter().enumerate().map(|(i, p)| (log_path(&game, p.id), i)).collect();
+    let hl: Vec<(Vec<f64>, usize)> = picks(&game, &s).iter().map(|p| (log_path(&game, p.id), p.role.slot())).collect();
     let rich: Vec<Vec<f64>> = rich_ids(&game, &s).iter().map(|&id| log_path(&game, id)).collect();
     let scene =
         Scene { game: &game, counts: &counts, ensemble: &e, highlighted: &hl, rich_paths: &rich, rich_full: false };
@@ -86,8 +85,105 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// Builds dist/index.html (standalone page) and dist/fragment.html (the same page without the
-/// document skeleton, for hosts that add their own).
+/// `cargo metadata` for the WebAssembly target, as JSON.
+fn metadata(root: &Path) -> serde_json::Value {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = Command::new(cargo)
+        .current_dir(root)
+        .args(["metadata", "--format-version", "1", "--filter-platform", "wasm32-unknown-unknown"])
+        .output()
+        .expect("run cargo metadata");
+    assert!(out.status.success(), "cargo metadata failed");
+    serde_json::from_slice(&out.stdout).expect("cargo metadata output is JSON")
+}
+
+/// License notices of every third-party crate compiled into the WebAssembly module, and of the
+/// embedded font, as an HTML <details> block.
+fn notices(root: &Path, meta: &serde_json::Value) -> String {
+    let packages = meta["packages"].as_array().expect("packages");
+    // `cargo tree -p coin-web` resolves features for the WebAssembly build alone (the workspace
+    // metadata would also count what only xtask enables, such as PNG output).
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let tree = Command::new(cargo)
+        .current_dir(root)
+        .args([
+            "tree",
+            "-p",
+            "coin-web",
+            "--target",
+            "wasm32-unknown-unknown",
+            "-e",
+            "normal",
+            "--prefix",
+            "none",
+            "-f",
+            "{p}",
+        ])
+        .output()
+        .expect("run cargo tree");
+    assert!(tree.status.success(), "cargo tree failed");
+    let used: std::collections::BTreeSet<(String, String)> = String::from_utf8_lossy(&tree.stdout)
+        .lines()
+        .filter(|l| !l.contains(" (/") && !l.contains(" (*)") && !l.trim().is_empty())
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.to_string(), it.next()?.trim_start_matches('v').to_string()))
+        })
+        .collect();
+    let members: Vec<&str> =
+        meta["workspace_members"].as_array().expect("members").iter().filter_map(|v| v.as_str()).collect();
+    let mut body = String::new();
+    let mut texts: Vec<(String, Vec<String>)> = Vec::new(); // license text -> crates
+    for p in packages.iter().filter(|p| {
+        let key = (p["name"].as_str().unwrap_or("").to_string(), p["version"].as_str().unwrap_or("").to_string());
+        used.contains(&key) && !members.contains(&p["id"].as_str().unwrap_or(""))
+    }) {
+        let name = format!("{} {}", p["name"].as_str().unwrap_or("?"), p["version"].as_str().unwrap_or("?"));
+        body.push_str(&format!(
+            "<li>{} — {}</li>",
+            html_escape(&name),
+            html_escape(p["license"].as_str().unwrap_or("vedi testo"))
+        ));
+        let dir =
+            Path::new(p["manifest_path"].as_str().expect("manifest path")).parent().expect("crate dir").to_path_buf();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|f| {
+                let n = f.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_uppercase();
+                f.is_file()
+                    && (n.starts_with("LICENSE")
+                        || n.starts_with("LICENCE")
+                        || n.starts_with("COPYING")
+                        || n.starts_with("NOTICE"))
+            })
+            .collect();
+        files.sort();
+        for f in files {
+            let t = std::fs::read_to_string(&f).unwrap_or_default().trim().to_string();
+            match texts.iter_mut().find(|(x, _)| *x == t) {
+                Some((_, who)) => who.push(name.clone()),
+                None => texts.push((t, vec![name.clone()])),
+            }
+        }
+    }
+    let font =
+        std::fs::read_to_string(root.join("crates/coin-chart/assets/IBMPlexSans-LICENSE.txt")).expect("font license");
+    texts.push((font.trim().to_string(), vec!["IBM Plex Sans (font del grafico)".into()]));
+    let mut out = format!(
+        "<details class=\"notices\"><summary>Licenze del software incluso nella pagina</summary><ul>{body}<li>IBM Plex Sans — OFL-1.1</li></ul>"
+    );
+    for (t, who) in texts {
+        out.push_str(&format!("<p><b>{}</b></p><pre>{}</pre>", html_escape(&who.join(", ")), html_escape(&t)));
+    }
+    out.push_str("</details>");
+    out
+}
+
+/// Builds dist/index.html (one file with the page and its WebAssembly module) and
+/// dist/fragment.html (the same page without the document skeleton, for hosts that add their own).
 fn web() {
     let root = root();
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -97,15 +193,18 @@ fn web() {
         .status()
         .expect("run cargo");
     assert!(status.success(), "building the WebAssembly module failed (rustup target add wasm32-unknown-unknown)");
-    let target = std::env::var("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|_| root.join("target"));
+    let meta = metadata(&root);
+    // The target directory as cargo resolves it (CARGO_TARGET_DIR, build.target-dir, or target/).
+    let target = PathBuf::from(meta["target_directory"].as_str().expect("target_directory"));
     let wasm = std::fs::read(target.join("wasm32-unknown-unknown/release/coin_web.wasm")).expect("read wasm");
     let template = std::fs::read_to_string(root.join("web/index.html")).expect("read web/index.html");
-    for key in ["/*@TOKENS@*/", "@LEDE@", "@WASM@"] {
+    for key in ["/*@TOKENS@*/", "@LEDE@", "@WASM@", "<!--@NOTICES@-->"] {
         assert_eq!(template.matches(key).count(), 1, "template must contain {key} exactly once");
     }
     let fragment = template
         .replace("/*@TOKENS@*/", &coin_chart::theme::css_tokens())
         .replace("@LEDE@", &html_escape(&coin_web::default_lede()))
+        .replace("<!--@NOTICES@-->", &notices(&root, &meta))
         .replace("@WASM@", &base64(&wasm));
     let page = format!(
         "<!doctype html>\n<html lang=\"it\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\">\n<style>body{{margin:0}}[hidden]{{display:none!important}}</style>\n</head>\n<body>\n{fragment}\n</body>\n</html>\n"

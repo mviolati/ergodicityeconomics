@@ -75,22 +75,29 @@ mod tests {
 
     #[test]
     fn lines_equal_a_direct_computation_over_players() {
-        let game = Game::peters(250, 5);
-        let players = 777;
-        let (counts, _) = simulate(&game, players);
-        let e = ensemble(&game, players as u64, &counts);
-        let lat = game.lattice();
-        let paths: Vec<Vec<u32>> = (0..players as u64).map(|i| path(&game, i)).collect();
-        for t in [1u32, 2, 50, 249, 250] {
-            let mut ls: Vec<f64> = paths.iter().map(|p| lat.at(t, p[t as usize])).collect();
-            ls.sort_by(f64::total_cmp);
-            assert_eq!(e.median[t as usize], ls[players.div_ceil(2) - 1], "median t={t}");
-            let mean: f64 = ls.iter().map(|l| 10f64.powf(*l)).sum::<f64>() / players as f64;
-            assert!((e.mean[t as usize] - mean.log10()).abs() < 1e-12, "mean t={t}");
-            let rich = ls.iter().filter(|l| **l >= lat.rich).count() as u64;
-            let broke = ls.iter().filter(|l| **l < lat.broke).count() as u64;
-            assert_eq!((e.rich_now[t as usize], e.broke_now[t as usize]), (rich, broke), "t={t}");
+        // The second game lowers the rich threshold so that rich_now is not trivially zero.
+        for (game, players) in [(Game::peters(250, 5), 777usize), (Game { rich: 1e4, ..Game::peters(250, 5) }, 778)] {
+            let (counts, _) = simulate(&game, players);
+            let e = ensemble(&game, players as u64, &counts);
+            let lat = game.lattice();
+            let paths: Vec<Vec<u32>> = (0..players as u64).map(|i| path(&game, i)).collect();
+            let mut rich_seen = 0;
+            for t in [1u32, 2, 50, 249, 250] {
+                let mut ls: Vec<f64> = paths.iter().map(|p| lat.at(t, p[t as usize])).collect();
+                ls.sort_by(f64::total_cmp);
+                assert_eq!(e.median[t as usize], ls[players.div_ceil(2) - 1], "median t={t}");
+                let mean: f64 = ls.iter().map(|l| 10f64.powf(*l)).sum::<f64>() / players as f64;
+                assert!((e.mean[t as usize] - mean.log10()).abs() < 1e-12, "mean t={t}");
+                let rich = ls.iter().filter(|l| **l >= lat.rich).count() as u64;
+                let broke = ls.iter().filter(|l| **l < lat.broke).count() as u64;
+                assert_eq!((e.rich_now[t as usize], e.broke_now[t as usize]), (rich, broke), "t={t}");
+                rich_seen += rich;
+            }
+            if game.rich < 1e9 {
+                assert!(rich_seen > 0, "the low threshold must be reached");
+            }
+            assert_eq!(e.expected[10], lat.l0 + 10.0 * (1.05f64).log10());
+            assert_eq!(e.max_cell, players as u32, "round 0 holds every player in one cell");
         }
-        assert_eq!(e.expected[10], lat.l0 + 10.0 * (1.05f64).log10());
     }
 }

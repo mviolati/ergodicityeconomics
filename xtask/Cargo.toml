@@ -10,3 +10,4 @@ publish = false
 coin-core = { path = "../crates/coin-core" }
 coin-chart = { path = "../crates/coin-chart", features = ["png"] }
 coin-web = { path = "../crates/coin-web" }
+serde_json = "1"

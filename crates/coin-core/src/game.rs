@@ -54,10 +54,12 @@ impl Game {
     /// The log10 lattice of this game.
     pub fn lattice(&self) -> Lattice {
         let lb = self.lose.log10();
+        let lw = self.win.log10();
         Lattice {
             l0: self.start.log10(),
             lb,
-            gap: self.win.log10() - lb,
+            lw,
+            gap: lw - lb,
             rich: self.rich.log10(),
             broke: self.broke.log10(),
             expected_step: (0.5 * (self.win + self.lose)).log10(),
@@ -72,6 +74,8 @@ pub struct Lattice {
     pub l0: f64,
     /// log10 of the tails factor.
     pub lb: f64,
+    /// log10 of the heads factor.
+    pub lw: f64,
     /// Distance between neighbour lattice points: log10(win / lose).
     pub gap: f64,
     /// log10 of the rich threshold.
@@ -93,6 +97,14 @@ impl Lattice {
     #[inline(always)]
     pub fn at(&self, t: u32, k: u32) -> f64 {
         self.base(t) + f64::from(k) * self.gap
+    }
+
+    /// Size of a fall, in decades (log10 units), over `rounds` rounds with `heads` heads:
+    /// `-(heads * log10(win) + tails * log10(lose))`. It depends only on (rounds, heads), so the
+    /// same fall always gives the same number wherever it happens.
+    #[inline(always)]
+    pub fn fall(&self, rounds: u32, heads: u32) -> f64 {
+        f64::from(rounds - heads) * -self.lb - f64::from(heads) * self.lw
     }
 
     /// log10 of the expected wealth after `t` rounds.
@@ -141,11 +153,21 @@ mod tests {
     #[test]
     fn distinct_lattice_points_are_far_apart() {
         let lat = Game::peters(Game::MAX_ROUNDS, 0).lattice();
-        let mut all: Vec<f64> =
-            (0..=Game::MAX_ROUNDS).flat_map(|t| (0..=t).map(move |k| lat.at(t, k))).collect();
+        let mut all: Vec<f64> = (0..=Game::MAX_ROUNDS).flat_map(|t| (0..=t).map(move |k| lat.at(t, k))).collect();
         all.sort_by(f64::total_cmp);
         let closest = all.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min);
         assert!(closest > 1e-9, "two lattice points are only {closest:e} apart");
+    }
+
+    /// Falls are compared as numbers from [`Lattice::fall`]. Two different falls must never be
+    /// within rounding error of each other.
+    #[test]
+    fn distinct_falls_are_far_apart() {
+        let lat = Game::peters(Game::MAX_ROUNDS, 0).lattice();
+        let mut all: Vec<f64> = (0..=Game::MAX_ROUNDS).flat_map(|r| (0..=r).map(move |h| lat.fall(r, h))).collect();
+        all.sort_by(f64::total_cmp);
+        let closest = all.windows(2).map(|w| w[1] - w[0]).fold(f64::INFINITY, f64::min);
+        assert!(closest > 1e-9, "two different falls are only {closest:e} apart");
     }
 
     #[test]

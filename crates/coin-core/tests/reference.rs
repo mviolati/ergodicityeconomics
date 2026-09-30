@@ -1,33 +1,44 @@
 //! Cross-checks against an independent implementation and against the law of fair coins.
 
-use coin_core::{ensemble::ensemble, sim::simulate, Game};
+use coin_core::{
+    ensemble::ensemble,
+    sim::{density_len, simulate, simulate_range, Summary, FIELDS, PEAK_K, PEAK_T},
+    Game,
+};
 
 #[test]
 fn equals_independent_reference_implementation() {
     let text = include_str!("golden.txt");
     let mut lines = text.lines().filter(|l| !l.starts_with('#'));
-    let mut cases = 0;
+    let (mut cases, mut rich_seen) = (0, 0);
     while let Some(head) = lines.next() {
         let h: Vec<u64> =
             head.strip_prefix("case ").expect("case line").split(' ').map(|x| x.parse().unwrap()).collect();
-        let (seed, players, rounds) = (h[0], h[1] as usize, h[2] as u32);
+        let (seed, rounds, count) = (h[0], h[1] as u32, h[2] as usize);
+        let rows: Vec<Vec<u64>> = (0..count)
+            .map(|_| lines.next().expect("player line").split(' ').map(|x| x.parse().unwrap()).collect())
+            .collect();
         let game = Game::peters(rounds, seed);
         let lat = game.lattice();
-        let (_, s) = simulate(&game, players);
-        for i in 0..players {
-            let v: Vec<u32> = lines.next().expect("player line").split(' ').map(|x| x.parse().unwrap()).collect();
-            let got = [
-                s.final_k[i],
-                s.peak_t[i],
-                s.peak_k[i],
-                s.broke_t[i],
-                u32::from(lat.is_rich(s.peak_t[i], s.peak_k[i])),
-            ];
-            assert_eq!(got[..], v[..], "seed {seed} player {i}");
+        let players = rows.iter().map(|r| r[0]).max().unwrap() as usize + 1;
+        // Simulate only the blocks that hold the listed players (ranges start at multiples of 64).
+        for row in &rows {
+            let first = row[0] / 64 * 64;
+            let n = (players - first as usize).min(64);
+            let mut counts = vec![0u32; density_len(rounds)];
+            let mut s = Summary::zeros(n);
+            simulate_range(&game, first, &mut counts, s.slice_mut(0..n));
+            let i = (row[0] - first) as usize;
+            let mut got: Vec<u64> = vec![row[0]];
+            got.extend((0..FIELDS).map(|f| u64::from(s.get(f, i))));
+            got.push(u64::from(lat.is_rich(s.get(PEAK_T, i), s.get(PEAK_K, i))));
+            assert_eq!(got, *row, "seed {seed} rounds {rounds} player {}", row[0]);
+            rich_seen += row[9];
         }
         cases += 1;
     }
-    assert_eq!(cases, 3);
+    assert_eq!(cases, 4);
+    assert!(rich_seen >= 8, "the reference must include players who reach 1 billion EUR");
 }
 
 /// Pearson chi-square statistic of observed counts against Binomial(t, 1/2), cells with an

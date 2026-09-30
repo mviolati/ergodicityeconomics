@@ -99,7 +99,8 @@ pub fn eur(l: f64) -> String {
         return format!("{} mln €", three(l - 6.0));
     }
     if l >= 3.0 {
-        let v = 10f64.powf(l).floor() as u64;
+        // Same slack as in `sig`: 5.000 € must not print as 4.999 €.
+        let v = (10f64.powf(l) * (1.0 + 1e-12)).floor() as u64;
         return format!("{} €", int(v.max(1000)));
     }
     format!("{} €", three(l))
@@ -132,6 +133,8 @@ mod tests {
         assert_eq!(eur(12.345f64.log10()), "12,3 €");
         assert_eq!(eur(0.0123f64.log10()), "0,0123 €");
         assert_eq!(eur(6216.9f64.log10()), "6.216 €");
+        assert_eq!(eur(5000f64.log10()), "5.000 €");
+        assert_eq!(eur(1000f64.log10()), "1.000 €");
         assert_eq!(eur(1.34e8f64.log10()), "134 mln €");
         assert_eq!(eur(7.729e9f64.log10()), "7,72 mld €");
         assert_eq!(eur(16.9255), "8,4 × 10¹⁶ €");

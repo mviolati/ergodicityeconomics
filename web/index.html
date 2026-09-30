@@ -39,7 +39,7 @@ button:disabled { opacity: 0.55; cursor: progress; }
 .chart canvas { display: block; max-width: 100%; }
 .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; padding: 16px; text-align: center; }
 .cross { position: absolute; width: 1px; background: var(--muted); pointer-events: none; }
-.dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; border: 2px solid var(--surface); pointer-events: none; box-sizing: content-box; }
+.dot { position: absolute; width: 8px; height: 8px; margin: -6px 0 0 -6px; border-radius: 50%; border: 2px solid var(--surface); pointer-events: none; box-sizing: content-box; }
 .tip {
   position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
   padding: 8px 10px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.14); width: max-content; max-width: min(320px, 80vw); z-index: 2;
@@ -49,6 +49,8 @@ button:disabled { opacity: 0.55; cursor: progress; }
 .tip .head { font-weight: 600; margin-bottom: 2px; }
 .sw { display: inline-block; width: 20px; height: 0; border-top: 2.5px solid currentColor; vertical-align: middle; margin-right: 7px; }
 .sw.dot-style { border-top-style: dotted; } .sw.dash-style { border-top-style: dashed; } .sw.thin { border-top-width: 1.5px; }
+.sw.bar-style { width: 10px; height: 12px; border: none; background: currentColor; vertical-align: -1px; margin-right: 17px; }
+caption { text-align: left; font: 500 13px var(--font-body); color: var(--muted); padding-bottom: 6px; }
 .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px 28px; font-size: 13.5px; }
 .legend .item { display: grid; gap: 1px; }
 .legend .sub { color: var(--muted); font-size: 12.5px; }
@@ -69,6 +71,9 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
 .notes { border-top: 1px solid var(--rule); padding-top: 14px; color: var(--muted); font-size: 14px; display: grid; gap: 8px; max-width: 72ch; }
 .notes p { margin: 0; }
 .notes b { color: var(--ink); font-weight: 600; }
+.notices { font-size: 12.5px; color: var(--muted); }
+.notices pre { white-space: pre-wrap; font: 11.5px var(--font-data); max-height: 16em; overflow: auto; background: var(--bg); padding: 8px; border-radius: 4px; }
+.notices ul { margin: 8px 0; padding-left: 18px; columns: 2 220px; }
 </style>
 
 <div class="page">
@@ -104,7 +109,7 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
     <canvas id="plot" role="img" aria-label="Grafico della ricchezza dei giocatori"></canvas>
     <div class="cross" id="cross" hidden></div>
     <div id="dots"></div>
-    <div class="status" id="status">Simulazione in corso…</div>
+    <div class="status" id="status" role="status" aria-live="polite">Simulazione in corso…</div>
     <div class="tip" id="tip" hidden></div>
   </section>
 
@@ -117,16 +122,18 @@ th { font-family: var(--font-body); font-weight: 500; color: var(--muted); }
   </details>
 
   <section class="notes">
-    <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Nessuna cella sotto una soglia viene disegnata sopra la sua linea.</p>
-    <p><b>Le linee.</b> Le tre linee colorate spesse sono giocatori veri di questo run. Le linee arancioni sottili sono i giocatori che in quel round hanno almeno 1 miliardo €: si possono contare, round per round. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
+    <p><b>Il fondo grigio conta i giocatori.</b> Ogni cella è un round e un livello di ricchezza: più la cella si stacca dallo sfondo, più giocatori contiene (scala logaritmica, numeri nella legenda). Quando più round o più livelli cadono nello stesso pixel, il pixel mostra la cella più piena. Le celle di un round coprono l'asse senza buchi e nessuna cella attraversa una linea di soglia.</p>
+    <p><b>Le linee.</b> Le linee colorate spesse (fino a tre) sono giocatori veri di questo run, con il colore del loro ruolo. Le linee arancioni sottili sono i giocatori che hanno toccato 1 miliardo €; giocatori allo stesso livello nello stesso round si sovrappongono, quindi il numero esatto per round è nella striscia sotto il grafico. Il giocatore mediano è quello a metà classifica: il posto ⌈P/2⌉ partendo dal più povero, con P giocatori. La media è la ricchezza totale divisa per P.</p>
     <p><b>Riproducibile.</b> La moneta del giocatore <i>i</i> al round <i>t</i> è un bit di Philox4x32-10 con chiave il seed. Stesso seed, stessi giocatori, su ogni dispositivo e con qualsiasi numero di thread.</p>
     <p><b>Motore.</b> Simulazione, testi e pixel del grafico sono calcolati in Rust compilato in WebAssembly, divisi tra i core del dispositivo. Il JavaScript della pagina sposta solo i dati e li mette sullo schermo.</p>
   </section>
+  <!--@NOTICES@-->
 </div>
 
 <script>
 "use strict";
 const WASM_B64 = "@WASM@";
+const FIELDS = 8;
 const mod = WebAssembly.compile(Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0)));
 const main = mod.then(m => WebAssembly.instantiate(m));
 const decoder = new TextDecoder();
@@ -136,37 +143,44 @@ const $ = id => document.getElementById(id);
 const WORKER = `
 let inst;
 onmessage = async (e) => {
-  const d = e.data;
-  if (!inst) inst = await WebAssembly.instantiate(d.mod);
-  const x = inst.exports, cells = d.rounds * (d.rounds + 1), n = d.n;
-  const sizes = [4 * cells, 4 * n, 4 * n, 4 * n, 4 * n, 8 * n];
-  const p = sizes.map(b => x.alloc(b));
-  const rc = x.sim_chunk(d.rounds, d.seedLo, d.seedHi, d.firstBlock, n, ...p);
-  const m = x.memory.buffer;
-  const out = {
-    rc,
-    counts: new Uint32Array(m, p[0], cells).slice(),
-    u32: [1, 2, 3, 4].map(i => new Uint32Array(m, p[i], n).slice()),
-    drawdown: new Float64Array(m, p[5], n).slice(),
-  };
-  sizes.forEach((b, i) => x.dealloc(p[i], b));
-  postMessage(out, [out.counts.buffer, ...out.u32.map(a => a.buffer), out.drawdown.buffer]);
+  try {
+    const d = e.data;
+    if (!inst) inst = await WebAssembly.instantiate(d.mod);
+    const x = inst.exports, cells = d.rounds * (d.rounds + 1), n = d.n;
+    const pc = x.alloc(4 * cells), pf = x.alloc(4 * ${FIELDS} * n);
+    const rc = x.sim_chunk(d.rounds, d.seedLo, d.seedHi, d.firstBlock, n, pc, pf);
+    const m = x.memory.buffer;
+    const out = { rc, counts: new Uint32Array(m, pc, cells).slice(), fields: new Uint32Array(m, pf, ${FIELDS} * n).slice() };
+    x.dealloc(pc, 4 * cells); x.dealloc(pf, 4 * ${FIELDS} * n);
+    postMessage(out, [out.counts.buffer, out.fields.buffer]);
+  } catch (err) {
+    postMessage({ error: String(err && err.message || err) });
+  }
 };`;
 const workerURL = URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }));
 const pool = [];
 const worker = i => { while (pool.length <= i) pool.push(new Worker(workerURL)); return pool[i]; };
-const ask = (w, msg) => new Promise((ok, fail) => { w.onmessage = e => ok(e.data); w.onerror = fail; w.postMessage(msg); });
+const ask = (w, msg) => new Promise((ok, fail) => {
+  w.onmessage = e => e.data.error ? fail(new Error(e.data.error)) : ok(e.data);
+  w.onerror = e => { e.preventDefault(); fail(new Error(e.message || "errore nel worker")); };
+  w.onmessageerror = () => fail(new Error("messaggio del worker illeggibile"));
+  w.postMessage(msg);
+});
 const read = (x, len) => decoder.decode(new Uint8Array(x.memory.buffer, x.out_ptr(), len));
 
-let wasm = null, ready = false, drawMs = 0, simText = "";
+let wasm = null, ready = false, busy = false, simText = "", richTexts = null;
+const controls = () => [$("play"), $("reseed"), $("players"), $("rounds"), $("seed")];
 
 async function play() {
+  if (busy) return; // one run at a time: a second click never mixes two runs
+  busy = true; ready = false; hide();
+  controls().forEach(c => { c.disabled = true; });
   const P = +$("players").value, R = +$("rounds").value;
   let seed = Math.floor(Number($("seed").value));
   if (!Number.isSafeInteger(seed) || seed < 0) seed = 0;
   $("seed").value = String(seed);
   const seedLo = seed % 4294967296, seedHi = Math.floor(seed / 4294967296);
-  $("play").disabled = true; $("status").hidden = false;
+  $("status").hidden = false;
   $("status").textContent = "Simulazione in corso…";
   try {
     const m = await mod;
@@ -182,21 +196,25 @@ async function play() {
     const simMs = performance.now() - t0;
     parts.forEach((part, w) => {
       if (part.rc !== 0) throw new Error("simulazione rifiutata");
-      const first = w * per, n = part.drawdown.length;
+      const first = w * per, n = part.fields.length / FIELDS;
       new Uint32Array(wasm.memory.buffer, wasm.run_slot(0, 0), part.counts.length).set(part.counts);
       wasm.run_add_scratch();
-      part.u32.forEach((a, i) => new Uint32Array(wasm.memory.buffer, wasm.run_slot(i + 1, first), n).set(a));
-      new Float64Array(wasm.memory.buffer, wasm.run_slot(5, first), n).set(part.drawdown);
+      for (let f = 0; f < FIELDS; f++) {
+        new Uint32Array(wasm.memory.buffer, wasm.run_slot(f + 1, first), n).set(part.fields.subarray(f * n, (f + 1) * n));
+      }
     });
     if (wasm.run_finish(simMs, parts.length) !== 0) throw new Error("risultati incompleti");
-    ready = true;
     show(JSON.parse(read(wasm, wasm.view())));
+    busy = false; ready = true;
     draw();
     $("status").hidden = true;
   } catch (err) {
+    ready = false;
+    $("status").hidden = false;
     $("status").textContent = `Non è stato possibile simulare: ${err.message}. Ricarica la pagina e riprova.`;
   } finally {
-    $("play").disabled = false;
+    busy = false;
+    controls().forEach(c => { c.disabled = false; });
   }
 }
 
@@ -207,28 +225,38 @@ function el(tag, cls, text) {
   return e;
 }
 
+function swatch(style, color) {
+  const sw = el("span", `sw ${style === "dot" ? "dot-style" : style === "dash" ? "dash-style" : style === "bar" ? "bar-style" : style === "thin" ? "thin" : ""}`);
+  sw.style.color = color;
+  return sw;
+}
+
 function show(v) {
   $("lede").textContent = v.lede;
   $("plot").setAttribute("aria-label", v.aria);
   $("tiles").replaceChildren(...v.tiles.map(t => { const d = el("div", "tile"); d.append(el("span", "v", t.value), el("span", "k", t.label)); return d; }));
 
   const items = v.players.map(p => {
-    const d = el("div", "item"), top = el("span"), sw = el("span", "sw");
-    sw.style.color = `var(--p${p.slot + 1})`;
-    top.append(sw, document.createTextNode(p.name));
+    const d = el("div", "item"), top = el("span");
+    top.append(swatch("solid", `var(--p${p.slot + 1})`), document.createTextNode(p.name));
     d.append(top, el("span", "sub", p.detail));
     return d;
   });
   const lines = el("div", "item");
-  v.lines.forEach(l => { const s = el("span"), sw = el("span", `sw ${l.style === "dot" ? "dot-style" : l.style === "dash" ? "dash-style" : ""}`); sw.style.color = "var(--ink)"; s.append(sw, document.createTextNode(l.label)); lines.append(s); });
-  const rich = el("div", "item"), rs = el("span"), rsw = el("span", "sw thin");
-  rsw.style.color = "var(--p2)";
-  rs.append(rsw, document.createTextNode(v.rich.note));
+  v.lines.forEach(l => {
+    const s = el("span");
+    s.append(swatch(l.style, l.style === "bar" ? "var(--p2)" : "var(--ink)"), document.createTextNode(l.label));
+    lines.append(s);
+  });
+  richTexts = v.rich;
+  const rich = el("div", "item"), rs = el("span");
+  if (v.rich.count > 0) rs.append(swatch("thin", "var(--p2)"));
+  rs.append(el("span", null, "")); rs.lastChild.id = "richnote";
   rich.append(rs);
   if (v.rich.count > 0) {
     const lab = el("label"), box = document.createElement("input");
     box.type = "checkbox"; box.id = "richfull"; box.checked = !!window.__richFull;
-    box.addEventListener("change", () => { window.__richFull = box.checked; draw(); });
+    box.addEventListener("change", () => { window.__richFull = box.checked; richNote(); draw(); });
     lab.append(box, document.createTextNode(v.rich.toggle));
     rich.append(lab);
   }
@@ -236,17 +264,29 @@ function show(v) {
   scale.append(el("span", null, v.scale.title), el("div", "bar"), ticks);
   v.scale.ticks.forEach(t => { const s = el("span", null, t.label); s.style.left = `${(100 * t.pos).toFixed(2)}%`; ticks.append(s); });
   $("legend").replaceChildren(...items, lines, rich, scale);
+  richNote();
   thinTicks();
 
   const table = $("table"), head = el("tr");
-  v.table.head.forEach(h => head.append(el("th", null, h)));
-  table.replaceChildren(head, ...v.table.rows.map(r => { const tr = el("tr"); r.forEach(c => tr.append(el("td", null, c))); return tr; }));
+  v.table.head.forEach(h => { const th = el("th", null, h); th.scope = "col"; head.append(th); });
+  const rows = v.table.rows.map(r => {
+    const tr = el("tr");
+    r.forEach((c, i) => { const cell = el(i === 0 ? "th" : "td", null, c); if (i === 0) cell.scope = "row"; tr.append(cell); });
+    return tr;
+  });
+  table.replaceChildren(el("caption", null, v.table.caption), head, ...rows);
   simText = v.timing;
+}
+
+function richNote() {
+  const n = $("richnote");
+  if (n && richTexts) n.textContent = window.__richFull && richTexts.count > 0 ? richTexts.noteFull : richTexts.note;
 }
 
 // Hide scale labels that would overlap a neighbour (the first and the last always stay).
 function thinTicks() {
   const spans = [...document.querySelectorAll(".scale .ticks span")];
+  if (spans.length < 3) return;
   spans.forEach(s => { s.style.visibility = "visible"; });
   const last = spans[spans.length - 1];
   let prev = spans[0];
@@ -262,39 +302,44 @@ const isDark = () => {
 };
 
 function draw() {
-  if (!ready) return;
+  if (!ready || busy) return;
   const chart = $("chart"), canvas = $("plot");
-  const cssW = Math.max(280, chart.clientWidth - 20);
-  const cssH = Math.round(Math.min(560, Math.max(320, cssW * 0.56)));
+  const cssW = Math.max(200, chart.clientWidth - 20);
+  const cssH = Math.round(Math.min(640, Math.max(380, cssW * 0.62)));
   const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
   const t0 = performance.now();
   const ptr = wasm.render(cssW, cssH, dpr, isDark() ? 1 : 0, window.__richFull ? 1 : 0);
+  if (!ptr) return;
   const w = wasm.render_width(), h = wasm.render_height();
   canvas.width = w; canvas.height = h;
   canvas.style.width = `${cssW}px`; canvas.style.height = `${cssH}px`;
   const px = new Uint8ClampedArray(wasm.memory.buffer, ptr, w * h * 4).slice();
   canvas.getContext("2d").putImageData(new ImageData(px, w, h), 0, 0);
-  drawMs = performance.now() - t0;
-  $("timing").textContent = `${simText} · disegno ${Math.round(drawMs)} ms`;
+  $("timing").textContent = `${simText} · disegno ${Math.round(performance.now() - t0)} ms`;
   hide();
 }
 
 function hide() { $("tip").hidden = true; $("cross").hidden = true; $("dots").replaceChildren(); }
 
 function hover(ev) {
-  if (!ready) return;
+  if (!ready || busy) return;
   const r = $("plot").getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
-  const h = JSON.parse(read(wasm, wasm.hover(x, y)));
+  const len = wasm.hover(x, y);
+  const h = len ? JSON.parse(read(wasm, len)) : { inside: false };
   if (!h.inside) { hide(); return; }
   const cross = $("cross");
-  cross.hidden = false; cross.style.left = `${10 + h.x}px`;
+  cross.hidden = false; cross.style.left = `${10 + h.x - 0.5}px`;
   cross.style.top = `${10 + h.top}px`; cross.style.height = `${h.bottom - h.top}px`;
-  $("dots").replaceChildren(...h.players.map(p => { const d = el("div", "dot"); d.style.left = `${10 + h.x}px`; d.style.top = `${10 + p.y}px`; d.style.background = `var(--p${p.slot + 1})`; return d; }));
+  $("dots").replaceChildren(...h.players.map(p => {
+    const d = el("div", "dot");
+    d.style.left = `${10 + h.x}px`; d.style.top = `${10 + p.y}px`; d.style.background = `var(--p${p.slot + 1})`;
+    return d;
+  }));
   const tip = $("tip");
   const row = (label, value, slot) => {
     const d = el("div", "row"), l = el("span");
-    if (slot !== undefined) { const sw = el("span", "sw"); sw.style.color = `var(--p${slot + 1})`; l.append(sw); }
+    if (slot !== undefined) l.append(swatch("solid", `var(--p${slot + 1})`));
     l.append(document.createTextNode(label));
     d.append(l, el("span", "num", value));
     return d;
@@ -305,14 +350,16 @@ function hover(ev) {
   tip.hidden = false;
   const tw = tip.offsetWidth, th = tip.offsetHeight;
   const left = x + 18 + tw > r.width ? x - tw - 8 : x + 18;
-  tip.style.left = `${Math.max(0, left) + 10}px`;
+  tip.style.left = `${Math.max(0, Math.min(r.width - tw, left)) + 10}px`;
   tip.style.top = `${Math.max(4, Math.min(r.height - th, y - 20)) + 10}px`;
 }
 
 $("plot").addEventListener("pointermove", hover);
+$("plot").addEventListener("pointerdown", hover);
 $("plot").addEventListener("pointerleave", hide);
 $("controls").addEventListener("submit", e => { e.preventDefault(); play(); });
 $("reseed").addEventListener("click", () => {
+  if (busy) return;
   const a = new Uint32Array(2); crypto.getRandomValues(a);
   $("seed").value = String((a[0] & 0x1fffff) * 4294967296 + a[1]);
   play();
@@ -321,6 +368,6 @@ let resizeTimer;
 window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { draw(); thinTicks(); }, 120); });
 new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
-window.__coin = { play, draw, wasm: () => wasm };
+window.__coin = { play, draw, wasm: () => wasm, busy: () => busy, ready: () => ready };
 (document.fonts ? document.fonts.ready : Promise.resolve()).then(play);
 </script>

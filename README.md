@@ -7,21 +7,25 @@ typical player loses almost everything. This is the example of Fig. 2 in Ole Pet
 states the same point in [a tweet](https://twitter.com/EmanuelDerman/status/1532473709239455745).
 
 This project simulates the full path of every player and shows all of them in one chart. The code is
-Rust only: simulation, text, chart pixels and the build of the web page.
+Rust: simulation, text, chart pixels and the build of the web page. The only other code is the small
+JavaScript in the page that moves bytes between workers, WebAssembly and the screen, and an independent
+Python reference used by one test.
 
 ![1,000,000 players, 1,000 rounds, seed 2022](docs/chart.png)
 
-*1,000,000 players, 1,000 rounds, seed 2022. 277 players reach 1 billion € at least once. At most 43 of
-them are above 1 billion € in the same round. 243 of the 277 end below 1 €.*
+*1,000,000 players, 1,000 rounds, seed 2022 (`cargo xtask png --players 1000000 --seed 2022 --width 1000
+--height 620 --dpr 1 --out docs/chart.png`). 277 players reach 1 billion € at least once. At most 43 of
+them are above 1 billion € in the same round (strip under the chart). 243 of the 277 end below 1 €.*
 
 ## How to read the chart
 
 | Mark | Meaning |
 |---|---|
-| Grey background | Number of players in each cell (round × wealth level). A cell that stands out more from the background holds more players. The scale is logarithmic; the page shows it with numbers. If more than one round or level falls on one pixel, the pixel shows the fullest cell. No cell is drawn on the other side of a threshold line. |
-| Thin orange lines | The players who have at least 1 billion € in that round. You can count them round by round. An option on the page shows their full paths. |
-| Thick coloured lines | Three real players of the run: the richest at the end; among the players who reached 1 billion €, the one who ended lowest; the first player below 1 €. Each role is decided over all players. |
-| Solid / dotted / dashed line | Median player / mean of all players / expected value. |
+| Grey background | Number of players in each cell (round × wealth level). A cell that stands out more from the background holds more players. The scale is logarithmic; the page shows it with numbers. If more than one round or level falls on one pixel, the pixel shows the fullest cell. The cells of one round cover the axis without holes, and no cell crosses a threshold line. |
+| Orange strip under the chart | The exact number of players with at least 1 billion € in each round. |
+| Thin orange lines | The players who reached 1 billion €, by default only while they are above it. Players on the same level in the same round have the same wealth, so their lines coincide: count with the strip, not with the lines. An option on the page shows their full paths. |
+| Thick coloured lines | Up to three real players of the run, coloured by role. Blue: the richest at the end. Orange: among the players who reached 1 billion €, the one who ended lowest (if nobody reached it: the largest fall from a previous peak). Green: the first player below 1 €. Each role is decided over all players; ties are stated. |
+| Solid / dotted / dashed line | Median player (rank ⌈P/2⌉ from the poorest) / mean of all players / expected value. |
 
 ## Design
 
@@ -29,9 +33,11 @@ them are above 1 billion € in the same round. 243 of the 277 end below 1 €.*
   (counter `(i / 64, t)`, key = seed). Philox is counter-based: any path is a function of `(seed, i)` only.
   The result is the same on every device and with any number of threads.
 - **Exact numbers.** For each player the simulation stores integers only: heads at the end, round and heads
-  of the peak, first round below 1 €. One function (`Lattice::at`) converts `(round, heads)` to wealth. A test
-  checks every lattice point up to 2,000 rounds: none is closer than 1e-9 (log10) to a threshold, so each
-  threshold test in `f64` is exact.
+  of the peak, first round below 1 €, start and end of the largest fall. One function (`Lattice::at`)
+  converts `(round, heads)` to wealth, and one (`Lattice::fall`) gives the size of a fall from its
+  (rounds, heads). Tests check every lattice point and every fall up to 2,000 rounds: two different values
+  are never closer than 1e-9 (log10), and no lattice point is closer than 1e-9 to a threshold. So every
+  comparison in `f64` is exact, also with a different `log10` on another platform.
 - **Values are truncated, not rounded.** A shown value is never above the true value. A player below
   1 billion € never shows as "1,00 mld €".
 
@@ -39,10 +45,11 @@ them are above 1 billion € in the same round. 243 of the 277 end below 1 €.*
 
 | Path | Contents |
 |---|---|
-| `crates/coin-core` | Philox4x32-10, simulation, per-player summaries, density, ensemble lines, headline figures, Italian number format |
+| `crates/coin-core` | Philox4x32-10, simulation, per-player summaries, density, ensemble lines, headline figures, player roles, Italian number format |
+| `crates/coin-core/tests/reference.py` | Independent pure-Python reference (exact fractions) that generates `golden.txt` |
 | `crates/coin-chart` | Chart renderer (tiny-skia, IBM Plex Sans outlines), palette, density rasterisation |
 | `crates/coin-web` | WebAssembly entry points, page text (JSON), tooltip |
-| `web/index.html` | Page template: markup, CSS, and the JavaScript that moves bytes between workers, WebAssembly and the screen |
+| `web/index.html` | Page template: markup, CSS, and the JavaScript glue |
 | `xtask` | `web`, `png` and `bench` commands |
 
 ## Commands
@@ -56,37 +63,45 @@ rustup target add wasm32-unknown-unknown
 | Command | Result |
 |---|---|
 | `cargo test --workspace --release` | All tests |
-| `cargo xtask web` | `dist/index.html` (standalone page) and `dist/fragment.html` (the same page without the document skeleton) |
+| `cargo xtask web` | `dist/index.html` (one file: page and WebAssembly module) and `dist/fragment.html` (the same page without the document skeleton) |
 | `cargo xtask png --players 1000000 --seed 2022 --theme dark --out chart.png` | The chart as PNG, rendered natively |
 | `cargo xtask bench` | Native simulation speed |
+| `python3 crates/coin-core/tests/reference.py > crates/coin-core/tests/golden.txt` | Regenerates the reference values |
 
 To open the page, serve `dist/` with any static server, for example `python3 -m http.server -d dist`.
+The page loads its text fonts from Google Fonts when it can, and otherwise uses the system fonts. The
+chart does not depend on them: its font is inside the WebAssembly module. The page lists the licences of
+all third-party code it contains.
 
 ## Verification
 
 The tests check:
 
 1. Philox4x32-10 against the Random123 known-answer vectors.
-2. The simulation against an independent pure-Python implementation that compares wealth as exact fractions
-   (`crates/coin-core/tests/golden.txt`).
-3. The fast simulation, the density, the ensemble lines and the headline figures against brute-force
-   recomputation from re-created paths.
+2. The simulation against the independent Python reference, which compares wealth as exact fractions
+   (520 players, 4 games; 8 players reach 1 billion €).
+3. The fast simulation, the largest fall, the density, the ensemble lines and the headline figures against
+   brute-force recomputation from re-created paths, also with a low "rich" threshold so that every rich code
+   path runs.
 4. Same results with 1 to 7 threads; adding players does not change the first ones.
 5. Density against Binomial(t, 1/2) (chi-square, 3 seeds, 5 rounds); no correlation between neighbour rounds
    or neighbour players.
-6. Rasterisation: each pixel matches its definition; every occupied cell is visible at every tested size;
-   isolated cells are not enlarged; no cell paints on the wrong side of a threshold.
-7. Every player role name is true for 80 runs; singular and plural texts; JSON escaping.
+6. Rasterisation: each pixel matches its definition; the bands of a round have no holes and never cross a
+   threshold; every occupied cell is visible at every tested size (also with a device pixel ratio of 1.25);
+   isolated cells are not enlarged; the frame does not cover data; the strip reaches the true maximum; the
+   tooltip reports exactly the cell the pixel shows.
+7. Every player role and its tie count are true (150 games); singular and plural texts; JSON escaping.
 
 ## Speed
 
-Measured in this project's development container (4 cores), 1,000 rounds:
+One measurement in this project's development container (4 cores), 1,000 rounds. Times change with the
+machine and its load.
 
-| Players | Native, 4 threads | Browser (Chromium, WebAssembly, 4 workers) |
+| Players | Native, 4 threads (`cargo xtask bench`) | Browser (Chromium, WebAssembly, 4 workers) |
 |---|---|---|
-| 10,000 | 0.03 s | 0.05 s simulation, 0.05 s chart |
-| 100,000 | 0.13 s | 0.29 s simulation, 0.05 s chart |
-| 1,000,000 | 0.92 s | 2.4 s simulation, 0.12 s chart |
+| 10,000 | 0.03 s | 0.04 s simulation, 0.04 s chart |
+| 100,000 | 0.13 s | 0.25 s simulation, 0.05 s chart |
+| 1,000,000 | 0.92 s | 2.5 s simulation, 0.11 s chart |
 
 ## License
 
